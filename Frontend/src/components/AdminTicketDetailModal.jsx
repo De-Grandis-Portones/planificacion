@@ -14,6 +14,7 @@ import {
 } from '../api';
 import BaseModal from './modals/BaseModal';
 import UserAvatar from './UserAvatar';
+import { nombreConUsuario } from '../utils/nombreUsuario';
 import { getCurrentAdminUsername } from '../utils/adminScopes';
 import {
   formatTicketAttachmentMeta,
@@ -117,8 +118,10 @@ export default function AdminTicketDetailModal({ ticketId, onClose, onTicketChan
       // "Pendiente", lo deja igual si se cierra) - simplemente reflejamos lo
       // que devolvió, no lo calculamos acá.
       const enProgresoPor = actualizado ? actualizado.en_progreso_por : ticket.en_progreso_por;
-      setTicket((prev) => (prev ? { ...prev, estado: estadoFinal, en_progreso_por: enProgresoPor } : prev));
-      onTicketChanged?.({ id: ticket.id, estado: estadoFinal, en_progreso_por: enProgresoPor });
+      const enProgresoPorNombre = actualizado ? actualizado.en_progreso_por_nombre : ticket.en_progreso_por_nombre;
+      const cambios = { estado: estadoFinal, en_progreso_por: enProgresoPor, en_progreso_por_nombre: enProgresoPorNombre };
+      setTicket((prev) => (prev ? { ...prev, ...cambios } : prev));
+      onTicketChanged?.({ id: ticket.id, ...cambios });
     } catch (err) {
       console.error('Error cambiando estado:', err);
     } finally {
@@ -134,9 +137,12 @@ export default function AdminTicketDetailModal({ ticketId, onClose, onTicketChan
     setAsignando(true);
     try {
       const { data } = accion === 'liberar' ? await unassignTicket(ticket.id) : await assignTicketToMe(ticket.id);
-      const enProgresoPor = data?.ticket?.en_progreso_por ?? null;
-      setTicket((prev) => (prev ? { ...prev, en_progreso_por: enProgresoPor } : prev));
-      onTicketChanged?.({ id: ticket.id, en_progreso_por: enProgresoPor });
+      const cambios = {
+        en_progreso_por: data?.ticket?.en_progreso_por ?? null,
+        en_progreso_por_nombre: data?.ticket?.en_progreso_por_nombre ?? null,
+      };
+      setTicket((prev) => (prev ? { ...prev, ...cambios } : prev));
+      onTicketChanged?.({ id: ticket.id, ...cambios });
     } catch (err) {
       console.error('Error asignando el ticket:', err);
     } finally {
@@ -168,7 +174,7 @@ export default function AdminTicketDetailModal({ ticketId, onClose, onTicketChan
       title={ticket?.categoria}
       subtitle={
         ticket
-          ? `${APP_LABEL[ticket.app_origen] || ticket.app_origen || ''} · Creado por ${ticket.creado_por_username || '—'} · ${new Date(ticket.created_at).toLocaleString()}`
+          ? `${APP_LABEL[ticket.app_origen] || ticket.app_origen || ''} · Creado por ${nombreConUsuario(ticket.creado_por_nombre, ticket.creado_por_username) || '—'} · ${new Date(ticket.created_at).toLocaleString()}`
           : ''
       }
     >
@@ -192,8 +198,8 @@ export default function AdminTicketDetailModal({ ticketId, onClose, onTicketChan
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, fontSize: 13, flexWrap: 'wrap' }}>
             <span style={{ color: 'var(--ink-weak)' }}>Trabajando en esto:</span>
             <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <UserAvatar username={ticket.en_progreso_por} size={20} />
-              <strong>{ticket.en_progreso_por || 'Nadie todavía'}</strong>
+              <UserAvatar username={ticket.en_progreso_por} name={ticket.en_progreso_por_nombre} size={20} />
+              <strong>{ticket.en_progreso_por_nombre || ticket.en_progreso_por || 'Nadie todavía'}</strong>
             </span>
             {ticket.en_progreso_por && ticket.en_progreso_por === miUsername ? (
               <button type="button" className="btn" disabled={asignando} onClick={() => cambiarAsignado('liberar')}>
@@ -236,7 +242,7 @@ export default function AdminTicketDetailModal({ ticketId, onClose, onTicketChan
             {(ticket.mensajes || []).map((m) => (
               <div key={m.id} style={{ marginBottom: 10 }}>
                 <div style={{ fontSize: 12, color: 'var(--ink-weak)' }}>
-                  {m.autor_username || (m.es_admin ? 'Soporte' : 'Usuario')} · {new Date(m.created_at).toLocaleString()}
+                  {nombreConUsuario(m.autor_nombre, m.autor_username) || (m.es_admin ? 'Soporte' : 'Usuario')} · {new Date(m.created_at).toLocaleString()}
                 </div>
                 <div style={{ fontSize: 14, whiteSpace: 'pre-wrap' }}>{m.mensaje}</div>
               </div>

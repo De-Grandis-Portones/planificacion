@@ -10,6 +10,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { clearAdminToken, fetchAdminTickets } from '../../src/api';
 import AdminTicketDetailModal, { ESTADO_LABEL, ESTADO_COLOR, APP_LABEL } from '../../src/components/AdminTicketDetailModal';
 import UserAvatar from '../../src/components/UserAvatar';
+import { nombreConUsuario } from '../../src/utils/nombreUsuario';
 
 const ESTADOS = [
   { key: '', label: 'Todos' },
@@ -110,7 +111,7 @@ export default function AdminTicketsPage() {
                 <td style={{ padding: 8, maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {t.mensaje}
                 </td>
-                <td style={{ padding: 8 }}>{t.creado_por_username || '—'}</td>
+                <td style={{ padding: 8 }}>{nombreConUsuario(t.creado_por_nombre, t.creado_por_username) || '—'}</td>
                 <td style={{ padding: 8 }}>{new Date(t.created_at).toLocaleString()}</td>
                 <td style={{ padding: 8 }}>
                   <span style={{ fontWeight: 700, color: ESTADO_COLOR[t.estado] || 'var(--ink)' }}>
@@ -118,8 +119,8 @@ export default function AdminTicketsPage() {
                   </span>
                   {t.en_progreso_por && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 2 }}>
-                      <UserAvatar username={t.en_progreso_por} size={14} />
-                      <span style={{ fontSize: 11, color: 'var(--ink-weak)' }}>{t.en_progreso_por}</span>
+                      <UserAvatar username={t.en_progreso_por} name={t.en_progreso_por_nombre} size={14} />
+                      <span style={{ fontSize: 11, color: 'var(--ink-weak)' }}>{t.en_progreso_por_nombre || t.en_progreso_por}</span>
                     </div>
                   )}
                 </td>

@@ -31,6 +31,7 @@ import {
 } from '../../src/api';
 import AdminTicketDetailModal, { APP_LABEL, ESTADO_COLOR } from '../../src/components/AdminTicketDetailModal';
 import UserAvatar from '../../src/components/UserAvatar';
+import { nombreConUsuario } from '../../src/utils/nombreUsuario';
 
 const CLOSED_COL = '__closed';
 const TAREAS_COL = 'tarea';
@@ -227,7 +228,9 @@ export default function AdminTicketsBoardPage() {
     return (
       String(t.categoria || '').toLowerCase().includes(busquedaNormalizada) ||
       String(t.mensaje || '').toLowerCase().includes(busquedaNormalizada) ||
+      String(t.creado_por_nombre || '').toLowerCase().includes(busquedaNormalizada) ||
       String(t.creado_por_username || '').toLowerCase().includes(busquedaNormalizada) ||
+      String(t.en_progreso_por_nombre || '').toLowerCase().includes(busquedaNormalizada) ||
       String(t.en_progreso_por || '').toLowerCase().includes(busquedaNormalizada)
     );
   }
@@ -509,11 +512,11 @@ export default function AdminTicketsBoardPage() {
                     </div>
                     <div style={{ fontSize: 13, lineHeight: 1.3 }}>{primerasPalabras(t.mensaje)}</div>
                     <div style={{ fontSize: 10, color: 'var(--ink-weak)', marginTop: 5 }}>
-                      {t.creado_por_username || '—'} · {new Date(t.created_at).toLocaleDateString()}
+                      {nombreConUsuario(t.creado_por_nombre, t.creado_por_username) || '—'} · {new Date(t.created_at).toLocaleDateString()}
                     </div>
                     {t.en_progreso_por && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 4 }}>
-                        <UserAvatar username={t.en_progreso_por} size={16} />
+                        <UserAvatar username={t.en_progreso_por} name={t.en_progreso_por_nombre} size={16} />
                         <span style={{ fontSize: 10, color: t.estado === 'in_progress' ? ESTADO_COLOR.in_progress : 'var(--ink-weak)', fontWeight: 700 }}>
                           {t.estado === 'closed' ? 'Resuelto' : t.estado === 'in_progress' ? 'En curso' : 'Asignado'}
                         </span>

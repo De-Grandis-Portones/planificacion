@@ -796,6 +796,12 @@ function isAnexo(p) {
   return tipo !== 'NV';
 }
 
+// Portón migrado del sistema anterior (Presupuestador legacy_import): su ficha técnica
+// viaja en nv_lines, así que el tablero le muestra el botón "Ver" como a un anexo.
+function isLegacyImport(p) {
+  return p?.legacy_import === true || p?.legacy_import === 'true';
+}
+
 function getNvLabel(p) {
   const nv = p?.nv ?? p?.NV ?? '-';
   if (String(p?.tipo || '').trim().toLowerCase() === 'puerta') return `PNV ${nv}`;
@@ -845,12 +851,13 @@ function AnexoDetailModal({ open, onClose, item }) {
 
   const tipo = String(item?.nv_tipo || 'NV').trim().toUpperCase();
   const lines = Array.isArray(detail?.nv_lines) ? detail.nv_lines : [];
+  const legacy = isLegacyImport(item);
 
   return (
     <ShellModal
       open={open}
       onClose={onClose}
-      title={`${tipo} ${item?.nv ?? '-'} · Detalle`}
+      title={legacy ? `NV ${item?.nv ?? '-'} · Ficha técnica (sistema anterior)` : `${tipo} ${item?.nv ?? '-'} · Detalle`}
       width="min(640px, 100%)"
     >
       <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -888,7 +895,7 @@ function AnexoDetailModal({ open, onClose, item }) {
                     }}
                   >
                     <span style={{ fontWeight: 700, minWidth: 28, color: '#64748b' }}>{Number(l.qty) || 1}×</span>
-                    <span>{String(l.raw_name || l.name || '').trim()}</span>
+                    <span>{String((legacy ? (l.name || l.raw_name) : (l.raw_name || l.name)) || '').trim()}</span>
                   </div>
                 ))
               )}
@@ -1344,13 +1351,13 @@ export default function StageColumn({
                 </div>
 
                 <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-                  {isAnexo(p) ? (
+                  {isAnexo(p) || isLegacyImport(p) ? (
                     <button
                       className="btn"
                       type="button"
                       onClick={() => { setAnexoTarget(p); setAnexoOpen(true); }}
                       style={{ fontWeight: 900 }}
-                      title="Ver detalle del ítem en el presupuestador"
+                      title={isLegacyImport(p) ? 'Ver ficha técnica del sistema anterior' : 'Ver detalle del ítem en el presupuestador'}
                     >
                       Ver
                     </button>

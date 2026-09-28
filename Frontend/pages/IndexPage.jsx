@@ -1,7 +1,8 @@
 // src/pages/IndexPage.jsx
 import { Link, useNavigate } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
-import { fetchAdminTickets, fetchReuniones, fetchProgramadoresChatNoLeidos } from '../src/api';
+import { fetchAdminTickets, fetchReuniones } from '../src/api';
+import { useChatProgramadores } from '../src/components/chatProgramadores/chatContexto';
 import { todayISO10 } from '../src/utils/isoWeek';
 
 function parseJwtPayload(token) {
@@ -143,27 +144,9 @@ export default function IndexPage({ routes = [] }) {
   }, []);
 
   // Mensajes nuevos del Chat de Programadores desde la última vez que se
-  // abrió. El backend fija la línea de base la primera vez que se consulta,
-  // así el historial que ya existía no aparece de golpe como "no leído".
-  const [chatNoLeidosCount, setChatNoLeidosCount] = useState(0);
-  useEffect(() => {
-    if (isPreprodOnly || !isProgramadoresAdmin) return undefined;
-    let cancelled = false;
-    async function cargarChatNoLeidos() {
-      try {
-        const { data } = await fetchProgramadoresChatNoLeidos();
-        if (!cancelled) setChatNoLeidosCount(Number(data?.count) || 0);
-      } catch (err) {
-        console.error('Error cargando mensajes nuevos del chat:', err);
-      }
-    }
-    cargarChatNoLeidos();
-    const interval = setInterval(cargarChatNoLeidos, 30000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [isPreprodOnly, isProgramadoresAdmin]);
+  // abrió: lo mantiene en tiempo real ChatProgramadoresProvider
+  // (NonProductionLayout), el mismo número que el botón "💬 Chat" de arriba.
+  const { noLeidos: chatNoLeidosCount } = useChatProgramadores();
 
   const logout = () => {
     clearAdminSession();

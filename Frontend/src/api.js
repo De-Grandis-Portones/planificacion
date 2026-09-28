@@ -819,15 +819,27 @@ export const deleteReunion = (id) => api.delete(`/admin/reuniones/${id}`);
    Un único grupo tipo WhatsApp, solo scope programadores:admin.
    params: { despues_de } (polling) | { antes_de } (anteriores) | nada. */
 export const fetchProgramadoresChat = (params) => api.get('/admin/programadores/chat/mensajes', { params });
-export function enviarProgramadoresChat({ texto, archivos = [] }) {
+// clienteId: id temporal de la burbuja "enviando" (vuelve en la respuesta y
+// en el evento en tiempo real). onProgreso(0-100): avance de la subida.
+export function enviarProgramadoresChat({ texto, archivos = [], respondeAId, clienteId, onProgreso }) {
   const form = new FormData();
   if (texto) form.append('texto', texto);
+  if (respondeAId) form.append('responde_a_id', String(respondeAId));
+  if (clienteId) form.append('cliente_id', clienteId);
   for (const f of archivos) form.append('archivos', f);
   return api.post('/admin/programadores/chat/mensajes', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
     timeout: 120000, // subir varios archivos grandes tarda más que los 30s por defecto
+    onUploadProgress: onProgreso
+      ? (e) => { if (e.total) onProgreso(Math.round((e.loaded / e.total) * 100)); }
+      : undefined,
   });
 }
+export const editarProgramadoresChat = (id, texto) => api.put(`/admin/programadores/chat/mensajes/${id}`, { texto });
+// Borrado lógico: queda "Este mensaje fue eliminado".
+export const eliminarProgramadoresChat = (id) => api.delete(`/admin/programadores/chat/mensajes/${id}`);
+// emoji null quita la reacción propia.
+export const reaccionarProgramadoresChat = (id, emoji) => api.put(`/admin/programadores/chat/mensajes/${id}/reaccion`, { emoji });
 export const marcarProgramadoresChatLeido = (hastaId) => api.post('/admin/programadores/chat/leido', { hasta_id: hastaId });
 export const fetchProgramadoresChatNoLeidos = () => api.get('/admin/programadores/chat/no-leidos');
 

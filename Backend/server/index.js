@@ -810,6 +810,28 @@ const MIGRATIONS = [
       );
     `,
   },
+  {
+    // Chat de Programadores, segunda tanda: responder citando, editar,
+    // eliminar (borrado lógico: eliminado_at, el texto y los adjuntos quedan
+    // en la base) y reacciones (una por persona por mensaje; quitarla deja
+    // emoji en NULL). updated_at se toca en cada cambio para que el polling
+    // de respaldo traiga ediciones/reacciones además de los mensajes nuevos.
+    name: 'programadores_chat_respuestas_reacciones',
+    sql: `
+      ALTER TABLE public.programadores_chat_mensajes ADD COLUMN IF NOT EXISTS responde_a_id BIGINT REFERENCES public.programadores_chat_mensajes(id);
+      ALTER TABLE public.programadores_chat_mensajes ADD COLUMN IF NOT EXISTS editado_at TIMESTAMPTZ;
+      ALTER TABLE public.programadores_chat_mensajes ADD COLUMN IF NOT EXISTS eliminado_at TIMESTAMPTZ;
+      ALTER TABLE public.programadores_chat_mensajes ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+      CREATE INDEX IF NOT EXISTS idx_programadores_chat_mensajes_updated ON public.programadores_chat_mensajes(updated_at);
+      CREATE TABLE IF NOT EXISTS public.programadores_chat_reacciones (
+        mensaje_id BIGINT NOT NULL REFERENCES public.programadores_chat_mensajes(id),
+        username TEXT NOT NULL,
+        emoji TEXT,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (mensaje_id, username)
+      );
+    `,
+  },
 ];
 
 async function runMigrations() {

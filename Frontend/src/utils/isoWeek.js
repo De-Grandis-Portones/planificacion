@@ -73,6 +73,28 @@ export function weekNumberFromLabel(weekLabel) {
   return String(Number(m[1]));
 }
 
+// Paleta pastel para "pintar" de un mismo color todas las filas de una misma
+// semana en /a (pedido explícito del usuario) - colores suaves, no chillones,
+// para no competir con el resto de la tabla.
+const PALETTE_PASTEL_SEMANA = [
+  '#ffd9d9', '#ffe6c2', '#fff6b8', '#ddf2c2', '#c2f0da',
+  '#c2eef2', '#c9daff', '#e2c2f2', '#f2c2e0', '#f2ddc2',
+];
+
+// Color pastel estable para una semana ISO (AAAA-Www) - semanas consecutivas
+// (incluso cruzando de un año a otro, ej. 2025-W52 -> 2026-W01) caen en
+// colores consecutivos de la paleta, así se nota a simple vista dónde
+// termina una semana y empieza la siguiente. null si el label no es válido
+// (fila sin fecha cargada todavía) - el caller decide qué hacer en ese caso.
+export function colorForWeekLabel(weekLabel) {
+  const m = String(weekLabel || '').match(/^(\d{4})-W(\d{2})$/);
+  if (!m) return null;
+  const year = Number(m[1]);
+  const week = Number(m[2]);
+  const key = year * 53 + week;
+  return PALETTE_PASTEL_SEMANA[key % PALETTE_PASTEL_SEMANA.length];
+}
+
 export function isoWeekStartEndFromLabel(weekLabel) {
   const m = String(weekLabel || '').match(/^(\d{4})-W(\d{2})$/);
   if (!m) return { start: '', end: '' };

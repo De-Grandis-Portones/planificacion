@@ -1,7 +1,11 @@
 const path = require('path');
 
+// USE_LOCAL_DB (seteado por dev-local.js, nunca en producción/Render) apunta
+// a .env.local en vez de .env — misma variable SUPABASE_DB_URL, apuntando a
+// la copia local en vez de Supabase real. Sin USE_LOCAL_DB, comportamiento
+// idéntico a siempre.
 require('dotenv').config({
-  path: path.join(__dirname, '..', '.env'),
+  path: path.join(__dirname, '..', process.env.USE_LOCAL_DB ? '.env.local' : '.env'),
 });
 
 const { app } = require('./app');
@@ -554,6 +558,20 @@ const MIGRATIONS = [
     `,
   },
   {
+    // Dos campos más por nodo del diagrama "Índice de Programación": las
+    // variables de entorno de esa app (para no tener que ir a buscar el
+    // .env real) y un texto libre de información relevante para programación.
+    // Igual que el link, es un solo valor compartido por nodo (a diferencia
+    // de notas_nodo_entradas, que es "qué se está trabajando ahora" y tiene
+    // una fila por admin).
+    name: 'notas_nodo_env_vars_e_info_programacion',
+    sql: `
+      ALTER TABLE public.notas_nodo
+        ADD COLUMN IF NOT EXISTS env_vars TEXT NOT NULL DEFAULT '',
+        ADD COLUMN IF NOT EXISTS info_programacion TEXT NOT NULL DEFAULT '';
+    `,
+  },
+  {
     // Todas las consultas de tickets (listMyTickets, listAllTickets) ordenan
     // por created_at desc y no había índice para eso - quedaba resuelto con
     // un sort completo de la tabla en cada pedido. No afecta hoy con el
@@ -601,28 +619,6 @@ const MIGRATIONS = [
     name: 'tickets_en_progreso_por',
     sql: `
       ALTER TABLE public.tickets ADD COLUMN IF NOT EXISTS en_progreso_por TEXT;
-    `,
-  },
-  {
-    // "Reuniones y Tareas" (/admin/reuniones) - agenda simple para que los
-    // admins carguen fecha/hora de reuniones entre ellos. Sin invitados/RSVP
-    // (no se pidió) - un espacio compartido, cualquier admin ve/crea/edita,
-    // mismo criterio "sin scope propio" que /admin/tickets.
-    name: 'reuniones_admin',
-    sql: `
-      CREATE TABLE IF NOT EXISTS public.reuniones (
-        id SERIAL PRIMARY KEY,
-        titulo TEXT NOT NULL,
-        descripcion TEXT,
-        fecha DATE NOT NULL,
-        hora_inicio TIME NOT NULL,
-        hora_fin TIME,
-        enlace TEXT,
-        creado_por TEXT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-      );
-      CREATE INDEX IF NOT EXISTS idx_reuniones_fecha ON public.reuniones(fecha);
     `,
   },
   {
@@ -724,6 +720,116 @@ const MIGRATIONS = [
     sql: `
       ALTER TABLE public.logistica_viajes
         ADD COLUMN IF NOT EXISTS fondo_efectivo NUMERIC(12,2);
+    `,
+  },
+  {
+    // Checklist configurable que la cuadrilla debe completar (todo en "OK")
+    // antes de poder arrancar un viaje en /despacho_v2 (pedido explícito del
+    // usuario) - dos listas independientes según si el viaje tiene alguna
+    // parada de instalación o es solo despacho. Se configura desde
+    // /admin/logistica-fechas (panel de configuración); la confirmación de
+    // cada viaje queda auditada con una copia (items_snapshot) de los ítems
+    // tal como estaban configurados al momento de arrancar - si después se
+    // edita/borra un ítem, el historial de viajes ya arrancados no cambia.
+    name: 'logistica_checklist_items',
+    sql: `
+      CREATE TABLE IF NOT EXISTS public.logistica_checklist_items (
+        id SERIAL PRIMARY KEY,
+        tipo TEXT NOT NULL,
+        texto TEXT NOT NULL,
+        orden INTEGER NOT NULL DEFAULT 0,
+        activo BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'logistica_checklist_items_tipo_check'
+        ) THEN
+          ALTER TABLE public.logistica_checklist_items
+            ADD CONSTRAINT logistica_checklist_items_tipo_check
+            CHECK (tipo IN ('solo_despacho','con_instalacion'));
+        END IF;
+      END $$;
+      CREATE INDEX IF NOT EXISTS idx_logistica_checklist_items_tipo ON public.logistica_checklist_items(tipo);
+
+      CREATE TABLE IF NOT EXISTS public.logistica_viaje_checklist_confirmaciones (
+        id SERIAL PRIMARY KEY,
+        viaje_id INTEGER NOT NULL REFERENCES public.logistica_viajes(id) ON DELETE CASCADE,
+        tipo TEXT NOT NULL,
+        items_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb,
+        confirmado_por TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_logistica_viaje_checklist_confirmaciones_viaje ON public.logistica_viaje_checklist_confirmaciones(viaje_id);
+    `,
+  },
+  {
+    // "Reuniones y Tareas" (/admin/reuniones) - agenda simple para que los
+    // admins carguen fecha/hora de reuniones entre ellos. Sin invitados/RSVP
+    // (no se pidió) - un espacio compartido, cualquier admin ve/crea/edita,
+    // mismo criterio "sin scope propio" que /admin/tickets.
+    name: 'reuniones_admin',
+    sql: `
+      CREATE TABLE IF NOT EXISTS public.reuniones (
+        id SERIAL PRIMARY KEY,
+        titulo TEXT NOT NULL,
+        descripcion TEXT,
+        fecha DATE NOT NULL,
+        hora_inicio TIME NOT NULL,
+        hora_fin TIME,
+        enlace TEXT,
+        creado_por TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_reuniones_fecha ON public.reuniones(fecha);
+    `,
+  },
+  {
+    // Chat de Programadores (/admin/programadores/chat) - un único grupo tipo
+    // WhatsApp, solo para quien tiene el scope programadores:admin. Los
+    // adjuntos viven en Supabase Storage (bucket privado "programadores-chat",
+    // ver lib/programadoresChatStorage.js); acá solo la metadata + el path.
+    // _lecturas guarda hasta qué mensaje leyó cada uno: de ahí salen el
+    // contador de no leídos del menú y los tildes de "visto".
+    name: 'programadores_chat',
+    sql: `
+      CREATE TABLE IF NOT EXISTS public.programadores_chat_mensajes (
+        id BIGSERIAL PRIMARY KEY,
+        autor_id TEXT,
+        autor_username TEXT NOT NULL,
+        texto TEXT,
+        adjuntos JSONB NOT NULL DEFAULT '[]'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE TABLE IF NOT EXISTS public.programadores_chat_lecturas (
+        username TEXT PRIMARY KEY,
+        ultimo_leido_id BIGINT NOT NULL DEFAULT 0,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+    `,
+  },
+  {
+    // Chat de Programadores, segunda tanda: responder citando, editar,
+    // eliminar (borrado lógico: eliminado_at, el texto y los adjuntos quedan
+    // en la base) y reacciones (una por persona por mensaje; quitarla deja
+    // emoji en NULL). updated_at se toca en cada cambio para que el polling
+    // de respaldo traiga ediciones/reacciones además de los mensajes nuevos.
+    name: 'programadores_chat_respuestas_reacciones',
+    sql: `
+      ALTER TABLE public.programadores_chat_mensajes ADD COLUMN IF NOT EXISTS responde_a_id BIGINT REFERENCES public.programadores_chat_mensajes(id);
+      ALTER TABLE public.programadores_chat_mensajes ADD COLUMN IF NOT EXISTS editado_at TIMESTAMPTZ;
+      ALTER TABLE public.programadores_chat_mensajes ADD COLUMN IF NOT EXISTS eliminado_at TIMESTAMPTZ;
+      ALTER TABLE public.programadores_chat_mensajes ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+      CREATE INDEX IF NOT EXISTS idx_programadores_chat_mensajes_updated ON public.programadores_chat_mensajes(updated_at);
+      CREATE TABLE IF NOT EXISTS public.programadores_chat_reacciones (
+        mensaje_id BIGINT NOT NULL REFERENCES public.programadores_chat_mensajes(id),
+        username TEXT NOT NULL,
+        emoji TEXT,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (mensaje_id, username)
+      );
     `,
   },
 ];

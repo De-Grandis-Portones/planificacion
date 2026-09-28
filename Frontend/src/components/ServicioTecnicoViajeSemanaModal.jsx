@@ -9,7 +9,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   fetchStSemanaDetalle, fetchStViajesConfig,
   crearStViaje, patchStViaje, borrarStViaje,
-  asignarStItem, desasignarStItem,
+  asignarStItem, desasignarStItem, reordenarStViaje,
   cerrarStSemana, reabrirStSemana,
   fetchStLogisticaSombra,
 } from '../api';

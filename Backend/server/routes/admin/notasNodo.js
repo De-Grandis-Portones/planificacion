@@ -16,13 +16,13 @@ router.get('/notas-nodo/:nodoId', adminAuth, async (req, res) => {
   }
 });
 
-// PUT /admin/notas-nodo/:nodoId  body: { nota, admin_user, admin_password, link }
+// PUT /admin/notas-nodo/:nodoId  body: { nota, admin_user, admin_password, link, env_vars, info_programacion }
 router.put('/notas-nodo/:nodoId', adminAuth, async (req, res) => {
   try {
-    const { nota, admin_user, admin_password, link } = req.body || {};
+    const { nota, admin_user, admin_password, link, env_vars, info_programacion } = req.body || {};
     const saved = await notasNodoDb.setNota(
       req.params.nodoId,
-      { nota, adminUser: admin_user, adminPassword: admin_password, link },
+      { nota, adminUser: admin_user, adminPassword: admin_password, link, envVars: env_vars, infoProgramacion: info_programacion },
       req.admin?.username
     );
     return res.json(saved);

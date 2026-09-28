@@ -25,6 +25,7 @@ const { DEPOSITO } = require('./logisticaDeposito');
 // desde la capa de rutas (routes/admin/logisticaViajes.js), no desde acá -
 // mismo patrón ya usado para logisticaMapaExtras.js.
 const { geocodeAddress } = require('./geocoding');
+const { listChecklistItems } = require('./logisticaChecklistDb');
 
 async function withTx(fn) {
   const client = await pool.connect();
@@ -366,7 +367,7 @@ async function deleteReglaEnvio(id) {
 }
 
 async function getConfig() {
-  const [zonas, vehiculos, cuadrillas, reglas, zonaReferencias, reglasEnvio, qcUsersQ] = await Promise.all([
+  const [zonas, vehiculos, cuadrillas, reglas, zonaReferencias, reglasEnvio, qcUsersQ, checklistItems] = await Promise.all([
     listZonas(),
     listVehiculos(),
     listCuadrillas(),
@@ -374,8 +375,12 @@ async function getConfig() {
     listZonaReferencias(),
     listReglasEnvio(),
     pool.query(`select id, name, is_active from public.qc_users where is_active is true order by name asc;`),
+    listChecklistItems(),
   ]);
-  return { zonas, vehiculos, cuadrillas, reglas, zona_referencias: zonaReferencias, reglas_envio: reglasEnvio, qc_users: qcUsersQ.rows, deposito: DEPOSITO };
+  return {
+    zonas, vehiculos, cuadrillas, reglas, zona_referencias: zonaReferencias, reglas_envio: reglasEnvio,
+    qc_users: qcUsersQ.rows, deposito: DEPOSITO, checklist_items: checklistItems,
+  };
 }
 
 // ===========================================================================

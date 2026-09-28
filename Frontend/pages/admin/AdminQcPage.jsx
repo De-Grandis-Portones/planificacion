@@ -89,6 +89,14 @@ function toBool(v) {
   return v === true;
 }
 
+function normalizeText(s) {
+  return String(s || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
 function getStageOptions(line) {
   return STAGES_BY_LINE[line] || [];
 }
@@ -469,6 +477,30 @@ export default function AdminQcPage() {
 
   const usersSorted = useMemo(() => (users || []).slice().sort((a, b) => (a.id || 0) - (b.id || 0)), [users]);
 
+  const [uSearch, setUSearch] = useState('');
+  const [uFilterActive, setUFilterActive] = useState('all'); // all | active | inactive
+  const [uFilterGlobal, setUFilterGlobal] = useState('all'); // all | global | scoped
+
+  const usersFiltered = useMemo(() => {
+    const q = normalizeText(uSearch);
+    return usersSorted.filter((u) => {
+      if (q && !normalizeText(u.name).includes(q)) return false;
+      if (uFilterActive === 'active' && u.is_active === false) return false;
+      if (uFilterActive === 'inactive' && u.is_active !== false) return false;
+      if (uFilterGlobal === 'global' && u.is_global !== true) return false;
+      if (uFilterGlobal === 'scoped' && u.is_global === true) return false;
+      return true;
+    });
+  }, [usersSorted, uSearch, uFilterActive, uFilterGlobal]);
+
+  const [motSearch, setMotSearch] = useState('');
+
+  const motivesFiltered = useMemo(() => {
+    const q = normalizeText(motSearch);
+    if (!q) return motives || [];
+    return (motives || []).filter((m) => normalizeText(m.label).includes(q));
+  }, [motives, motSearch]);
+
   return (
     <div className="container" style={{ maxWidth: 1200 }}>
       <div className="header-row" style={{ alignItems: 'center' }}>
@@ -498,6 +530,36 @@ export default function AdminQcPage() {
           </button>
         </div>
 
+        <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={{ fontSize: 12, opacity: 0.75, fontWeight: 800 }}>Buscar por nombre</span>
+            <input
+              className="btn"
+              value={uSearch}
+              onChange={(e) => setUSearch(e.target.value)}
+              placeholder="Nombre…"
+            />
+          </label>
+
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={{ fontSize: 12, opacity: 0.75, fontWeight: 800 }}>Estado</span>
+            <select className="btn" value={uFilterActive} onChange={(e) => setUFilterActive(e.target.value)}>
+              <option value="all">Todos</option>
+              <option value="active">Activos</option>
+              <option value="inactive">Inactivos</option>
+            </select>
+          </label>
+
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={{ fontSize: 12, opacity: 0.75, fontWeight: 800 }}>Permisos</span>
+            <select className="btn" value={uFilterGlobal} onChange={(e) => setUFilterGlobal(e.target.value)}>
+              <option value="all">Todos</option>
+              <option value="global">Global</option>
+              <option value="scoped">Con permisos por etapa</option>
+            </select>
+          </label>
+        </div>
+
         {usersErr && <div style={{ color: 'crimson', fontWeight: 800, marginTop: 10 }}>{usersErr}</div>}
         {loadingUsers ? (
           <div style={{ marginTop: 10 }}>Cargando usuarios…</div>
@@ -515,7 +577,7 @@ export default function AdminQcPage() {
                 </tr>
               </thead>
               <tbody>
-                {usersSorted.map((u) => {
+                {usersFiltered.map((u) => {
                   const scopes = Array.isArray(u?.scopes) ? u.scopes : [];
                   const scopeCount = scopes.filter((s) => s?.enabled !== false).length;
 
@@ -540,6 +602,13 @@ export default function AdminQcPage() {
                   <tr>
                     <td colSpan={6} style={{ padding: 10, opacity: 0.7 }}>
                       Sin usuarios.
+                    </td>
+                  </tr>
+                )}
+                {usersSorted.length > 0 && usersFiltered.length === 0 && (
+                  <tr>
+                    <td colSpan={6} style={{ padding: 10, opacity: 0.7 }}>
+                      Sin resultados para la búsqueda/filtro actual.
                     </td>
                   </tr>
                 )}
@@ -592,6 +661,16 @@ export default function AdminQcPage() {
             </select>
           </label>
 
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={{ fontSize: 12, opacity: 0.75, fontWeight: 800 }}>Buscar por label</span>
+            <input
+              className="btn"
+              value={motSearch}
+              onChange={(e) => setMotSearch(e.target.value)}
+              placeholder="Texto del motivo…"
+            />
+          </label>
+
           <button className="btn" type="button" onClick={reloadMotives} disabled={loadingMot}>
             {loadingMot ? 'Cargando…' : 'Refrescar'}
           </button>
@@ -614,7 +693,7 @@ export default function AdminQcPage() {
               </tr>
             </thead>
             <tbody>
-              {(motives || []).map((m) => (
+              {motivesFiltered.map((m) => (
                 <tr key={m.id}>
                   <td style={{ padding: 8, borderBottom: '1px solid #eee' }}>{m.id}</td>
                   <td style={{ padding: 8, borderBottom: '1px solid #eee' }}>{m.line}</td>
@@ -636,6 +715,13 @@ export default function AdminQcPage() {
                 <tr>
                   <td colSpan={8} style={{ padding: 10, opacity: 0.7 }}>
                     Sin motivos para el filtro actual.
+                  </td>
+                </tr>
+              )}
+              {!loadingMot && (motives || []).length > 0 && motivesFiltered.length === 0 && (
+                <tr>
+                  <td colSpan={8} style={{ padding: 10, opacity: 0.7 }}>
+                    Sin resultados para la búsqueda actual.
                   </td>
                 </tr>
               )}

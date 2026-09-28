@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 
-export default function BaseModal({ open, title, subtitle, onClose, children }) {
+export default function BaseModal({ open, title, subtitle, onClose, children, wide }) {
   useEffect(() => {
     if (!open) return;
 
@@ -23,7 +23,7 @@ export default function BaseModal({ open, title, subtitle, onClose, children }) 
 
   return (
     <div className="pp-modalOverlay" onMouseDown={onClose}>
-      <div className="pp-modal" onMouseDown={(e) => e.stopPropagation()}>
+      <div className={wide ? 'pp-modal pp-modal--wide' : 'pp-modal'} onMouseDown={(e) => e.stopPropagation()}>
         <div className="pp-modal__header">
           <h3 className="pp-modal__title">{title}</h3>
           {subtitle ? <div className="pp-modal__sub">{subtitle}</div> : null}

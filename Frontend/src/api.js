@@ -138,8 +138,19 @@ export async function fetchDespachoV2Viajes(rango) {
   const { data } = await apiDespachoV2.get('/despacho-v2/viajes', { params: { rango } });
   return data;
 }
-export async function marcarSalidaDespachoV2(viajeId) {
-  const { data } = await apiDespachoV2.post(`/despacho-v2/viajes/${viajeId}/marcar-salida`);
+// checklist: { tipo, item_ids } - obligatorio la primera vez que se arranca
+// el viaje (ver checklistDb.confirmarChecklistViaje en el backend); se
+// ignora en un segundo toque (el viaje ya arrancó, ya no tiene efecto).
+export async function marcarSalidaDespachoV2(viajeId, checklist) {
+  const { data } = await apiDespachoV2.post(`/despacho-v2/viajes/${viajeId}/marcar-salida`, {
+    checklist_tipo: checklist?.tipo,
+    checklist_item_ids: checklist?.item_ids,
+  });
+  return data;
+}
+// Ítems activos del checklist de arranque para un tipo (solo_despacho | con_instalacion).
+export async function fetchChecklistDespachoV2(tipo) {
+  const { data } = await apiDespachoV2.get(`/despacho-v2/checklist/${tipo}`);
   return data;
 }
 export async function marcarLlegadaDespachoV2(viajeId) {
@@ -156,6 +167,17 @@ export async function fetchNvDespachoV2(nv) {
 }
 export async function fetchNvAdjuntosDespachoV2(nv) {
   const { data } = await apiDespachoV2.get(`/despacho-v2/nv/${nv}/adjuntos`);
+  return data;
+}
+// Fotos/videos adjuntados al tomar la medición en el Presupuestador (listado
+// liviano, sin el archivo en sí).
+export async function fetchNvMedicionMediaDespachoV2(nv) {
+  const { data } = await apiDespachoV2.get(`/despacho-v2/nv/${nv}/medicion-media`);
+  return data;
+}
+// El archivo puntual (data URL base64) - se pide recién al tocar un ítem.
+export async function fetchMedicionMediaItemDespachoV2(nv, index) {
+  const { data } = await apiDespachoV2.get(`/despacho-v2/nv/${nv}/medicion-media/${index}`);
   return data;
 }
 export async function crearSolicitudStDespachoV2(nv, { descripcion, attachment }) {
@@ -177,6 +199,17 @@ export async function marcarEntregadoDespachoV2(viajeId, nv, { tipo, pin } = {})
 // Se llama SOLO después de que el usuario confirmó "sí, la ruta sigue así".
 export async function avisarSiguienteDespachoV2(viajeId, nv) {
   const { data } = await apiDespachoV2.post(`/despacho-v2/viajes/${viajeId}/nv/${nv}/avisar-siguiente`);
+  return data;
+}
+// "La ruta cambió" - paradas-portón que quedaban después de `nv` en el
+// orden original, para el picker de "¿cuál sigue?".
+export async function fetchParadasRestantesDespachoV2(viajeId, nv) {
+  const { data } = await apiDespachoV2.get(`/despacho-v2/viajes/${viajeId}/nv/${nv}/paradas-restantes`);
+  return data;
+}
+// Manda el aviso para la parada que el usuario eligió a mano (ruta cambiada).
+export async function avisarParadaElegidaDespachoV2(viajeId, nvOrigen, nvDestino) {
+  const { data } = await apiDespachoV2.post(`/despacho-v2/viajes/${viajeId}/nv/${nvOrigen}/avisar-parada/${nvDestino}`);
   return data;
 }
 // Gastos del viaje ("rendición de gastos") - se comparte entre toda la
@@ -216,6 +249,11 @@ export const setFechaMed = (id, fechaOrNull) => api.post(`/portones/${id}/fecha-
 
 export const setFechaPlanEntrega = (id, fechaOrNull) =>
   api.post(`/portones/${id}/fecha-plan-entrega`, { fecha_plan_entrega: fechaOrNull });
+
+// Flujo Logística (Fase 2c del motor de reglas de tiempo): fecha editable
+// aparte de fecha_plan_entrega. Null = usa fecha_plan_entrega como fallback.
+export const setFechaDespachoLogistica = (id, fechaOrNull) =>
+  api.post(`/portones/${id}/fecha-despacho-logistica`, { fecha_despacho_logistica: fechaOrNull });
 
 export const setSistemaPorton = (id, sistemaOrNull) =>
   api.post(`/portones/${id}/sistema`, { sistema: sistemaOrNull });
@@ -279,6 +317,113 @@ export async function saveWorkflowConfig(line, payload) {
 
 export async function getWorkflowConditionFields(line) {
   const { data } = await api.get('/admin/workflow/condition-fields', { params: { line } });
+  return data;
+}
+
+/* ============ ADMIN SCHEDULING (motor de reglas de tiempo — Fase 0/1, en sombra) ============ */
+export async function getSchedulingStandard(line) {
+  const { data } = await api.get('/admin/scheduling/standard', { params: { line } });
+  return data;
+}
+
+export async function saveSchedulingStandard(line, standards) {
+  const { data } = await api.put('/admin/scheduling/standard', { standards }, { params: { line } });
+  return data;
+}
+
+export async function getSchedulingRules(line) {
+  const { data } = await api.get('/admin/scheduling/rules', { params: { line } });
+  return data;
+}
+
+export async function saveSchedulingRules(line, rules) {
+  const { data } = await api.put('/admin/scheduling/rules', { rules }, { params: { line } });
+  return data;
+}
+
+export async function getSchedulingPreview(line, limit) {
+  const { data } = await api.get('/admin/scheduling/preview', { params: { line, limit } });
+  return data;
+}
+
+export async function getSchedulingRegressionPreview(line, { porton_id, limit, mode, flow } = {}) {
+  // La regresión de flota recorre varios portones — puede tardar más que el
+  // timeout global de 15s (mismo criterio que ya usan las llamadas a IA en
+  // este archivo, ej. recomendarLogisticaViajeIa).
+  const { data } = await api.get('/admin/scheduling/regression/preview', {
+    params: { line, porton_id, limit, mode, flow },
+    timeout: 60000,
+  });
+  return data;
+}
+
+// Fase 3: recursos físicos compartidos entre etapas (ej. una sola cortadora
+// para guillotina + corte_revest). El catálogo (scheduling_resource) es
+// global, no por línea; el mapeo (scheduling_stage_resource) sí es por línea.
+export async function getSchedulingResources() {
+  const { data } = await api.get('/admin/scheduling/resources');
+  return data;
+}
+
+export async function saveSchedulingResource(resource) {
+  const { data } = await api.post('/admin/scheduling/resources', resource);
+  return data;
+}
+
+export async function deleteSchedulingResource(resourceKey) {
+  const { data } = await api.delete(`/admin/scheduling/resources/${encodeURIComponent(resourceKey)}`);
+  return data;
+}
+
+export async function getSchedulingStageResource(line) {
+  const { data } = await api.get('/admin/scheduling/stage-resource', { params: { line } });
+  return data;
+}
+
+export async function saveSchedulingStageResource(line, mappings) {
+  const { data } = await api.put('/admin/scheduling/stage-resource', { mappings }, { params: { line } });
+  return data;
+}
+
+// Calendario laboral por recurso (categoría "Tiempo"). Sin cargar nada, un
+// recurso cae al fallback Lun-Vie 08:00-18:00 (ver lib/scheduling/calendar.js).
+export async function getSchedulingCalendar(resourceKey) {
+  const { data } = await api.get('/admin/scheduling/calendar', { params: { resource_key: resourceKey } });
+  return data;
+}
+
+export async function saveSchedulingCalendar(resourceKey, shifts) {
+  const { data } = await api.put('/admin/scheduling/calendar', { shifts }, { params: { resource_key: resourceKey } });
+  return data;
+}
+
+// resourceKey null/undefined = excepciones globales (feriado de planta completa).
+export async function getSchedulingCalendarExceptions(resourceKey) {
+  const { data } = await api.get('/admin/scheduling/calendar/exceptions', {
+    params: resourceKey ? { resource_key: resourceKey } : {},
+  });
+  return data;
+}
+
+export async function saveSchedulingCalendarExceptions(resourceKey, exceptions) {
+  const { data } = await api.put('/admin/scheduling/calendar/exceptions', { exceptions }, {
+    params: resourceKey ? { resource_key: resourceKey } : {},
+  });
+  return data;
+}
+
+// Variables de recurso (Fase 3b): atributos de sección/máquina (no del
+// portón) que se suman al contexto de evaluación de las etapas mapeadas a
+// ese resource_key. resourceKey null/undefined = todas (todas las secciones).
+export async function getSchedulingResourceVariables(resourceKey) {
+  const { data } = await api.get('/admin/scheduling/resource-variables', {
+    params: resourceKey ? { resource_key: resourceKey } : {},
+  });
+  return data;
+}
+
+export async function saveSchedulingResourceVariables(resourceKey, variables) {
+  const { data } = await api.put('/admin/scheduling/resource-variables', { variables }, { params: { resource_key: resourceKey } });
   return data;
 }
 
@@ -640,10 +785,25 @@ export const createTicket = (payload) => api.post('/admin/tickets', payload);
 export const fetchMyTickets = () => api.get('/admin/tickets/mine');
 export const fetchMyTicketDetail = (id) => api.get(`/admin/tickets/mine/${id}`);
 export const addMyTicketMessage = (id, payload) => api.post(`/admin/tickets/mine/${id}/messages`, payload);
+export const cancelMyTicket = (id) => api.delete(`/admin/tickets/mine/${id}`);
 export const fetchAdminTickets = (params) => api.get('/admin/tickets', { params });
 export const fetchAdminTicketDetail = (id) => api.get(`/admin/tickets/${id}`);
 export const addAdminTicketMessage = (id, payload) => api.post(`/admin/tickets/${id}/messages`, payload);
 export const updateTicketStatus = (id, estado) => api.patch(`/admin/tickets/${id}/status`, { estado });
+// "Asignarme"/"Tomar" (quedo yo como quien está trabajando en esto) o
+// "Quitarme" (queda sin nadie) - un click directo, en cualquier estado.
+export const assignTicketToMe = (id) => api.patch(`/admin/tickets/${id}/asignado`, { accion: 'asignar' });
+export const unassignTicket = (id) => api.patch(`/admin/tickets/${id}/asignado`, { accion: 'liberar' });
+// Solo para tarjetas "tarea" (creadas a mano en el tablero) - mueve la
+// tarjeta a otra columna del tablero, sin tocar su estado.
+export const updateTicketBoardColumn = (id, column) => api.patch(`/admin/tickets/${id}/board-column`, { column });
+// Borra el ticket sea cual sea su estado (pendiente/en curso/cerrado).
+export const deleteAdminTicket = (id) => api.delete(`/admin/tickets/${id}`);
+// "Apartados": columnas extra del tablero que un admin crea a mano ("+
+// Nuevo apartado" en AdminTicketsBoardPage.jsx), además de las fijas.
+export const fetchTicketApartados = () => api.get('/admin/tickets/apartados');
+export const createTicketApartado = (nombre) => api.post('/admin/tickets/apartados', { nombre });
+export const deleteTicketApartado = (clave) => api.delete(`/admin/tickets/apartados/${encodeURIComponent(clave)}`);
 
 /* ========= Reuniones y Tareas (/admin/reuniones) =========
    Agenda compartida entre admins - sin scope propio, cualquier admin
@@ -654,6 +814,34 @@ export const fetchReuniones = (params) => api.get('/admin/reuniones', { params }
 export const createReunion = (payload) => api.post('/admin/reuniones', payload);
 export const updateReunion = (id, payload) => api.put(`/admin/reuniones/${id}`, payload);
 export const deleteReunion = (id) => api.delete(`/admin/reuniones/${id}`);
+
+/* ========= Chat de Programadores (/admin/programadores/chat) =========
+   Un único grupo tipo WhatsApp, solo scope programadores:admin.
+   params: { despues_de } (polling) | { antes_de } (anteriores) | nada. */
+export const fetchProgramadoresChat = (params) => api.get('/admin/programadores/chat/mensajes', { params });
+// clienteId: id temporal de la burbuja "enviando" (vuelve en la respuesta y
+// en el evento en tiempo real). onProgreso(0-100): avance de la subida.
+export function enviarProgramadoresChat({ texto, archivos = [], respondeAId, clienteId, onProgreso }) {
+  const form = new FormData();
+  if (texto) form.append('texto', texto);
+  if (respondeAId) form.append('responde_a_id', String(respondeAId));
+  if (clienteId) form.append('cliente_id', clienteId);
+  for (const f of archivos) form.append('archivos', f);
+  return api.post('/admin/programadores/chat/mensajes', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000, // subir varios archivos grandes tarda más que los 30s por defecto
+    onUploadProgress: onProgreso
+      ? (e) => { if (e.total) onProgreso(Math.round((e.loaded / e.total) * 100)); }
+      : undefined,
+  });
+}
+export const editarProgramadoresChat = (id, texto) => api.put(`/admin/programadores/chat/mensajes/${id}`, { texto });
+// Borrado lógico: queda "Este mensaje fue eliminado".
+export const eliminarProgramadoresChat = (id) => api.delete(`/admin/programadores/chat/mensajes/${id}`);
+// emoji null quita la reacción propia.
+export const reaccionarProgramadoresChat = (id, emoji) => api.put(`/admin/programadores/chat/mensajes/${id}/reaccion`, { emoji });
+export const marcarProgramadoresChatLeido = (hastaId) => api.post('/admin/programadores/chat/leido', { hasta_id: hastaId });
+export const fetchProgramadoresChatNoLeidos = () => api.get('/admin/programadores/chat/no-leidos');
 
 /* ========= Logística de Viajes (despacho + instalación por semana, desde /a) =========
    Arma "viajes" (fecha + zona + cuadrilla + vehículo) por semana ISO y reparte en
@@ -704,6 +892,22 @@ export async function deleteLogisticaCuadrilla(id) {
 }
 export async function setLogisticaCuadrillaMiembros(id, qcUserIds) {
   const { data } = await api.put(`/admin/logistica/cuadrillas/${id}/miembros`, { qc_user_ids: qcUserIds });
+  return data;
+}
+
+// CheckList de arranque de viaje en /despacho_v2 (botón Play) - dos tipos:
+// solo_despacho | con_instalacion. Los ítems vienen junto al resto de la
+// config (fetchLogisticaViajesConfig -> config.checklist_items).
+export async function createLogisticaChecklistItem(payload) {
+  const { data } = await api.post('/admin/logistica/checklist-items', payload);
+  return data;
+}
+export async function updateLogisticaChecklistItem(id, patch) {
+  const { data } = await api.patch(`/admin/logistica/checklist-items/${id}`, patch);
+  return data;
+}
+export async function deleteLogisticaChecklistItem(id) {
+  const { data } = await api.delete(`/admin/logistica/checklist-items/${id}`);
   return data;
 }
 

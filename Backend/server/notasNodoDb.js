@@ -7,51 +7,73 @@ const { pool } = require('./db');
 
 async function getNota(nodoId) {
   const { rows } = await pool.query(
-    'select nodo_id, nota, admin_user, admin_password, link, updated_by, updated_at from public.notas_nodo where nodo_id = $1',
+    `select nodo_id, nota, admin_user, admin_password, link, env_vars, info_programacion, updated_by, updated_at
+       from public.notas_nodo where nodo_id = $1`,
     [nodoId]
   );
   if (!rows.length) {
-    return { nodo_id: nodoId, nota: '', admin_user: '', admin_password: '', link: '', updated_by: null, updated_at: null };
+    return {
+      nodo_id: nodoId,
+      nota: '',
+      admin_user: '',
+      admin_password: '',
+      link: '',
+      env_vars: '',
+      info_programacion: '',
+      updated_by: null,
+      updated_at: null,
+    };
   }
   return rows[0];
 }
 
 // El acceso principal (admin_user/admin_password) sólo se pisa cuando llegan
-// los DOS campos cargados: si solo vino uno (o ninguno), esta fila guarda la
-// nota igual pero deja admin_user/admin_password como estaban en la base -
+// los DOS campos cargados: si solo vino uno (o ninguno), esta fila guarda el
+// resto igual pero deja admin_user/admin_password como estaban en la base -
 // así un blur a medio cargar nunca borra un acceso que ya estaba guardado.
-// El link, en cambio, se guarda siempre junto con la nota (el frontend manda
-// las dos juntas en cada blur), así que no necesita esa misma protección.
-async function setNota(nodoId, { nota, adminUser, adminPassword, link } = {}, updatedBy) {
+// nota/link/env_vars/info_programacion, en cambio, cada uno se guarda
+// independiente del resto (el frontend manda solo el campo que cambió en
+// cada blur): un campo ausente (undefined) en el payload deja esa columna
+// como estaba en la base (coalesce($n, notas_nodo.col)) en vez de vaciarla.
+async function setNota(nodoId, { nota, adminUser, adminPassword, link, envVars, infoProgramacion } = {}, updatedBy) {
   const hasCreds = String(adminUser || '').trim() && String(adminPassword || '').trim();
+
+  const notaVal = nota === undefined ? null : String(nota || '');
+  const linkVal = link === undefined ? null : String(link || '');
+  const envVarsVal = envVars === undefined ? null : String(envVars || '');
+  const infoProgramacionVal = infoProgramacion === undefined ? null : String(infoProgramacion || '');
 
   if (hasCreds) {
     const { rows } = await pool.query(
-      `insert into public.notas_nodo (nodo_id, nota, admin_user, admin_password, link, updated_by, updated_at)
-       values ($1, $2, $3, $4, $5, $6, now())
+      `insert into public.notas_nodo (nodo_id, nota, admin_user, admin_password, link, env_vars, info_programacion, updated_by, updated_at)
+       values ($1, coalesce($2, ''), $3, $4, coalesce($5, ''), coalesce($6, ''), coalesce($7, ''), $8, now())
        on conflict (nodo_id) do update
-         set nota = excluded.nota,
+         set nota = coalesce($2, notas_nodo.nota),
              admin_user = excluded.admin_user,
              admin_password = excluded.admin_password,
-             link = excluded.link,
+             link = coalesce($5, notas_nodo.link),
+             env_vars = coalesce($6, notas_nodo.env_vars),
+             info_programacion = coalesce($7, notas_nodo.info_programacion),
              updated_by = excluded.updated_by,
              updated_at = now()
-       returning nodo_id, nota, admin_user, admin_password, link, updated_by, updated_at`,
-      [nodoId, String(nota || ''), String(adminUser).trim(), String(adminPassword).trim(), String(link || ''), updatedBy || null]
+       returning nodo_id, nota, admin_user, admin_password, link, env_vars, info_programacion, updated_by, updated_at`,
+      [nodoId, notaVal, String(adminUser).trim(), String(adminPassword).trim(), linkVal, envVarsVal, infoProgramacionVal, updatedBy || null]
     );
     return rows[0];
   }
 
   const { rows } = await pool.query(
-    `insert into public.notas_nodo (nodo_id, nota, link, updated_by, updated_at)
-     values ($1, $2, $3, $4, now())
+    `insert into public.notas_nodo (nodo_id, nota, link, env_vars, info_programacion, updated_by, updated_at)
+     values ($1, coalesce($2, ''), coalesce($3, ''), coalesce($4, ''), coalesce($5, ''), $6, now())
      on conflict (nodo_id) do update
-       set nota = excluded.nota,
-           link = excluded.link,
+       set nota = coalesce($2, notas_nodo.nota),
+           link = coalesce($3, notas_nodo.link),
+           env_vars = coalesce($4, notas_nodo.env_vars),
+           info_programacion = coalesce($5, notas_nodo.info_programacion),
            updated_by = excluded.updated_by,
            updated_at = now()
-     returning nodo_id, nota, admin_user, admin_password, link, updated_by, updated_at`,
-    [nodoId, String(nota || ''), String(link || ''), updatedBy || null]
+     returning nodo_id, nota, admin_user, admin_password, link, env_vars, info_programacion, updated_by, updated_at`,
+    [nodoId, notaVal, linkVal, envVarsVal, infoProgramacionVal, updatedBy || null]
   );
   return rows[0];
 }

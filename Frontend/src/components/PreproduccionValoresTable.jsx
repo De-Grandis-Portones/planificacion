@@ -33,6 +33,7 @@ import {
   isoWeekLabelFromDate,
   weekNumberFromLabel,
   weekTitleFromSelection,
+  colorForWeekLabel,
 } from '../utils/isoWeek';
 
 import { getCurrentScopes, hasAny } from '../utils/adminScopes';
@@ -2240,15 +2241,33 @@ export default function PreproduccionValoresTable() {
               </thead>
 
               <tbody>
-                {pagedRows.map((row) => (
-                  <tr key={row.id}>
-                    {visibleColsList.map((col) => (
-                      <td key={`${row.id}_${col.id}`}>
-                        {renderCell(row, col)}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
+                {pagedRows.map((row) => {
+                  // Pedido explícito del usuario: portones con la misma
+                  // semana de despacho se pintan del mismo pastel, y ese
+                  // color va cambiando de semana a semana (ver
+                  // colorForWeekLabel en utils/isoWeek.js) - así se ve de
+                  // un vistazo dónde corta una semana y empieza la otra.
+                  // Clase + variable CSS en vez de background inline directo:
+                  // el rayado cebra de nth-child(even) (y su versión con
+                  // !important en force-light.css, para forzar tema claro)
+                  // le ganan a un inline style común - ver la regla
+                  // .pp-row-semana en theme.css, con más especificidad para
+                  // ganarles a ambas siempre, sin importar fila par o impar.
+                  const colorSemana = colorForWeekLabel(weekLabelFromRow(row, 'despacho'));
+                  return (
+                    <tr
+                      key={row.id}
+                      className={colorSemana ? 'pp-row-semana' : undefined}
+                      style={colorSemana ? { '--row-semana-bg': colorSemana } : undefined}
+                    >
+                      {visibleColsList.map((col) => (
+                        <td key={`${row.id}_${col.id}`}>
+                          {renderCell(row, col)}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
 
                 {!loading && pagedRows.length === 0 ? (
                   <tr>

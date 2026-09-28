@@ -72,7 +72,11 @@ async function listViajesDeCuadrillas(cuadrillaIds, { soloProximos10 } = {}) {
          from public.logistica_viaje_portones vp
          join public.portones p on p.id = vp.porton_id
         where vp.viaje_id = vi.id) as cantidad_portones,
-      (select count(*) from public.logistica_viaje_paradas_extra pe where pe.viaje_id = vi.id) as cantidad_paradas_extra
+      (select count(*) from public.logistica_viaje_paradas_extra pe where pe.viaje_id = vi.id) as cantidad_paradas_extra,
+      exists(
+        select 1 from public.logistica_viaje_portones vp2
+         where vp2.viaje_id = vi.id and vp2.tipo = 'instalacion'
+      ) as tiene_instalacion
     from public.logistica_viajes vi
     left join public.logistica_cuadrillas c on c.id = vi.cuadrilla_id
     left join public.logistica_vehiculos ve on ve.id = vi.vehiculo_id
@@ -118,6 +122,10 @@ async function listViajesDeCuadrillas(cuadrillaIds, { soloProximos10 } = {}) {
     cantidad_paradas: (Number(r.cantidad_portones) || 0) + (Number(r.cantidad_paradas_extra) || 0),
     distancia_km: r.ruta_real?.distancia_km ?? null,
     duracion_horas: r.ruta_real?.duracion_horas ?? null,
+    // Para elegir qué checklist mostrar al arrancar el viaje (pedido
+    // explícito del usuario): "con_instalacion" si tiene AL MENOS una
+    // parada de instalación, "solo_despacho" si no.
+    checklist_tipo: r.tiene_instalacion ? 'con_instalacion' : 'solo_despacho',
   }));
 }
 
@@ -239,10 +247,13 @@ function normalizaAutomaticoManual(raw) {
 async function getNvDetalle(nv) {
   const nNv = Number(nv);
   if (!Number.isInteger(nNv)) return null;
-  const datos = await fetchDatosPorNv([nNv]);
+  const [datos, stAbierta] = await Promise.all([
+    fetchDatosPorNv([nNv]),
+    solicitudesDb.getSolicitudAbiertaPorNv(nNv).catch(() => null),
+  ]);
   const d = datos.get(nNv);
-  if (!d) return { nv: nNv, nombre_cliente: null, distribuidor: null, direccion: null, localidad: null, telefono: null, maps_url: null };
-  return { nv: nNv, ...d, automatico_manual: normalizaAutomaticoManual(d.motor_condicion) };
+  if (!d) return { nv: nNv, nombre_cliente: null, distribuidor: null, direccion: null, localidad: null, telefono: null, maps_url: null, st_abierta: stAbierta };
+  return { nv: nNv, ...d, automatico_manual: normalizaAutomaticoManual(d.motor_condicion), st_abierta: stAbierta };
 }
 
 // Botón "ST/PV" - crea una solicitud de Servicio Técnico (Fase 0, mismo
@@ -320,6 +331,14 @@ async function siguienteParadaPorton(viajeId, nvActual) {
   return null;
 }
 
+// Primera PARADA-PORTÓN del viaje - se usa al arrancar la ruta (botón
+// Play/marcar-salida), donde todavía no hay ningún NV "actual" del cual
+// partir. null si el viaje no tiene ningún portón cargado.
+async function primeraParadaPorton(viajeId) {
+  const paradas = await listParadasDeViaje(viajeId);
+  return paradas.find((p) => p.tipo === 'porton') || null;
+}
+
 // ===========================================================================
 // Aviso automático de WhatsApp a la siguiente parada - collage de fotos de
 // la cuadrilla (qc_users.foto_storage_path) + del vehículo
@@ -378,23 +397,29 @@ async function registrarAviso({ viajeId, nvOrigen, nvDestino, telefono, resultad
   );
 }
 
-// Orquesta todo: busca la próxima parada-portón, arma el texto/collage, y
-// manda - pensado para llamarse DESPUÉS de que el usuario confirmó "sí, la
-// ruta sigue así" (ver el endpoint, que ya le mostró esta misma parada
-// antes de preguntar).
-async function avisarSiguienteParada({ viajeId, nvOrigen, enviadoPor }) {
+// Arma el texto/collage y manda el WhatsApp para UNA parada puntual -
+// compartido por los tres disparadores posibles (primera parada al iniciar
+// el viaje, siguiente parada en el orden original, o parada elegida a mano
+// porque la ruta cambió). `nvOrigen` es solo para el log (de qué NV se
+// viene) - en el caso de la primera parada no hay un "de dónde viene", así
+// que los callers pasan el mismo nv de destino.
+async function enviarAvisoParaParada({ viajeId, parada, nvOrigen, enviadoPor }) {
   const whatsapp = require('./logisticaWhatsapp');
 
-  const siguiente = await siguienteParadaPorton(viajeId, nvOrigen);
-  if (!siguiente) return { ok: false, sinSiguiente: true };
-
-  const [nvDetalle, datos] = await Promise.all([getNvDetalle(siguiente.nv), datosParaAviso(viajeId)]);
+  const [nvDetalle, datos] = await Promise.all([getNvDetalle(parada.nv), datosParaAviso(viajeId)]);
   if (!datos) return { ok: false, error: 'Viaje no encontrado' };
 
+  // Mientras se testea el flujo (pedido explícito del usuario): TODOS los
+  // avisos van a este celular en vez de al cliente real, sin importar el
+  // NV. Sacar esta env var en Render el día que se confirme que el flujo
+  // anda bien y se quiera activar para clientes de verdad.
+  const telefonoTest = String(process.env.WHATSAPP_AVISO_TELEFONO_TEST || '').trim();
+  const telefonoDestino = telefonoTest || nvDetalle?.telefono;
+
   const resultado = await whatsapp.enviarAvisoEnCamino({
-    telefono: nvDetalle?.telefono,
+    telefono: telefonoDestino,
     nombreCliente: nvDetalle?.nombre_cliente,
-    horasTexto: formatearDuracionHoras(siguiente.horas_tramo),
+    horasTexto: formatearDuracionHoras(parada.horas_tramo),
     cuadrillaTexto: datos.cuadrillaTexto,
     vehiculoNombre: datos.vehiculoNombre,
     fotosMiembros: datos.fotosMiembros,
@@ -402,15 +427,48 @@ async function avisarSiguienteParada({ viajeId, nvOrigen, enviadoPor }) {
   });
 
   await registrarAviso({
-    viajeId, nvOrigen, nvDestino: siguiente.nv, telefono: nvDetalle?.telefono, resultado, enviadoPor,
+    viajeId, nvOrigen, nvDestino: parada.nv, telefono: telefonoDestino, resultado, enviadoPor,
   }).catch((e) => console.error('No se pudo registrar el aviso de WhatsApp:', e.message));
 
-  return { ok: resultado.ok, error: resultado.error, siguienteNv: siguiente.nv, nombreCliente: nvDetalle?.nombre_cliente };
+  return {
+    ok: resultado.ok, error: resultado.error, siguienteNv: parada.nv,
+    nombreCliente: nvDetalle?.nombre_cliente, horasTramo: parada.horas_tramo,
+  };
+}
+
+// Se llama al arrancar el viaje (botón Play/marcar-salida) - manda el aviso
+// de la PRIMERA parada-portón de la ruta, sin pedirle confirmación a la
+// cuadrilla (pedido explícito del usuario: el primer mensaje sale solo).
+async function avisarPrimeraParada({ viajeId, enviadoPor }) {
+  const primera = await primeraParadaPorton(viajeId);
+  if (!primera) return { ok: false, sinSiguiente: true };
+  return enviarAvisoParaParada({ viajeId, parada: primera, nvOrigen: primera.nv, enviadoPor });
+}
+
+// Orquesta todo: busca la próxima parada-portón, arma el texto/collage, y
+// manda - pensado para llamarse DESPUÉS de que el usuario confirmó "sí, la
+// ruta sigue así" (ver el endpoint, que ya le mostró esta misma parada
+// antes de preguntar).
+async function avisarSiguienteParada({ viajeId, nvOrigen, enviadoPor }) {
+  const siguiente = await siguienteParadaPorton(viajeId, nvOrigen);
+  if (!siguiente) return { ok: false, sinSiguiente: true };
+  return enviarAvisoParaParada({ viajeId, parada: siguiente, nvOrigen, enviadoPor });
+}
+
+// La ruta cambió y la cuadrilla eligió a mano cuál es la próxima parada a
+// entregar - manda el aviso para ESA parada puntual (no necesariamente la
+// que seguía en el orden original armado por el sistema).
+async function avisarParadaElegida({ viajeId, nvOrigen, nvDestino, enviadoPor }) {
+  const paradas = await listParadasDeViaje(viajeId);
+  const parada = paradas.find((p) => p.tipo === 'porton' && p.nv === Number(nvDestino));
+  if (!parada) return { ok: false, error: 'Esa parada no pertenece a este viaje' };
+  return enviarAvisoParaParada({ viajeId, parada, nvOrigen: Number(nvOrigen), enviadoPor });
 }
 
 module.exports = {
   listQcUsersDeCuadrillas, getQcUser, cuadrillasDeUsuario,
   listViajesDeCuadrillas, getViajeCuadrilla, marcarSalidaReal, marcarLlegadaReal,
   listParadasDeViaje, getNvDetalle, crearSolicitudSt,
-  marcarEntregado, siguienteParadaPorton, avisarSiguienteParada, datosParaAviso,
+  marcarEntregado, siguienteParadaPorton, primeraParadaPorton,
+  avisarPrimeraParada, avisarSiguienteParada, avisarParadaElegida, datosParaAviso,
 };

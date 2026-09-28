@@ -14,14 +14,19 @@ const adjuntosDb = require('../../lib/logisticaAdjuntosDb');
 const adjuntosStorage = require('../../lib/logisticaAdjuntosStorage');
 const gastosDb = require('../../lib/logisticaGastosDb');
 const gastosIa = require('../../lib/logisticaGastosIa');
+const medicionMediaDb = require('../../lib/presupuestadorMediaDb');
+const checklistDb = require('../../lib/logisticaChecklistDb');
 
 const router = express.Router();
 
 // Aviso automático de WhatsApp a la siguiente parada - pedido explícito del
-// usuario: mergear /despacho_v2 a main YA, pero dejar esto apagado por ahora
-// (la cuadrilla sigue avisando manual desde su propio WhatsApp, como hasta
-// hoy). Prender con WHATSAPP_AVISO_HABILITADO=true en el entorno cuando se
-// decida activarlo - no hace falta tocar código, solo la env var.
+// usuario. Prender con WHATSAPP_AVISO_HABILITADO=true en el entorno cuando
+// se decida activarlo - no hace falta tocar código, solo la env var.
+// Mientras se está testeando el flujo (pedido explícito del usuario),
+// además hay que setear WHATSAPP_AVISO_TELEFONO_TEST=3572676710 (ver
+// enviarAvisoParaParada en lib/despachoV2Db.js) para que TODOS los avisos
+// vayan a ese celular de prueba en vez de al cliente real - sacar esa
+// segunda env var recién cuando se confirme que el flujo anda bien.
 const WHATSAPP_AVISO_HABILITADO = String(process.env.WHATSAPP_AVISO_HABILITADO || '').toLowerCase() === 'true';
 
 // Mismo salt/hash que ya usa el resto del sistema QC (routes/public/qc.js,
@@ -90,10 +95,42 @@ router.get('/despacho-v2/viajes', asyncRoute(async (req, res) => {
   res.json({ ok: true, cuadrillas, viajes });
 }));
 
-// POST /despacho-v2/viajes/:id/marcar-salida - botón Play.
+// GET /despacho-v2/checklist/:tipo - ítems activos configurados para ese
+// tipo (solo_despacho | con_instalacion), lo que la cuadrilla tilda antes de
+// poder arrancar el viaje (pedido explícito del usuario).
+router.get('/despacho-v2/checklist/:tipo', asyncRoute(async (req, res) => {
+  res.json({ ok: true, items: await checklistDb.listChecklistItemsActivos(req.params.tipo) });
+}));
+
+// POST /despacho-v2/viajes/:id/marcar-salida - botón Play. Si el viaje
+// todavía no arrancó, exige el checklist configurado para su tipo (todos
+// los ítems activos en checklist_item_ids) ANTES de asentar la salida -
+// pedido explícito del usuario: sin completarlo no se habilita el viaje. Se
+// revalida acá contra lo que está configurado ahora mismo (no se confía en
+// la lista que ya vio el frontend). Si el viaje ya había arrancado (re-toque
+// del botón, ya sin efecto), no vuelve a exigirlo.
+// Si el aviso automático de WhatsApp está habilitado, dispara (sin bloquear
+// la respuesta - el collage de fotos puede tardar unos segundos) el de la
+// PRIMERA parada-portón de la ruta: el primer mensaje sale solo apenas la
+// cuadrilla arranca, sin pedirle confirmación.
 router.post('/despacho-v2/viajes/:id/marcar-salida', asyncRoute(async (req, res) => {
-  if (!(await requireViajeDeMiCuadrilla(req, res, req.params.id))) return;
+  const viaje = await requireViajeDeMiCuadrilla(req, res, req.params.id);
+  if (!viaje) return;
+
+  if (!viaje.hora_salida_real) {
+    await checklistDb.confirmarChecklistViaje({
+      viajeId: req.params.id,
+      tipo: String(req.body?.checklist_tipo || '').trim(),
+      itemIds: Array.isArray(req.body?.checklist_item_ids) ? req.body.checklist_item_ids : [],
+      confirmadoPor: req.despachoUser.name,
+    });
+  }
+
   const hora_salida_real = await db.marcarSalidaReal(req.params.id);
+  if (WHATSAPP_AVISO_HABILITADO) {
+    db.avisarPrimeraParada({ viajeId: req.params.id, enviadoPor: req.despachoUser.name })
+      .catch((e) => console.error('No se pudo enviar el primer aviso de WhatsApp:', e.message));
+  }
   res.json({ ok: true, hora_salida_real });
 }));
 
@@ -129,6 +166,23 @@ router.get('/despacho-v2/nv/:nv/adjuntos', asyncRoute(async (req, res) => {
   res.json({ ok: true, adjuntos: conUrl });
 }));
 
+// GET /despacho-v2/nv/:nv/medicion-media - fotos/videos que el vendedor
+// adjuntó al tomar la medición en el Presupuestador (pedido explícito del
+// usuario) - listado liviano, sin el archivo en sí (ver el endpoint de
+// abajo para pedir uno puntual al tocarlo).
+router.get('/despacho-v2/nv/:nv/medicion-media', asyncRoute(async (req, res) => {
+  res.json({ ok: true, media: await medicionMediaDb.listMedicionMedia(req.params.nv) });
+}));
+
+// GET /despacho-v2/nv/:nv/medicion-media/:index - el archivo puntual (data
+// URL base64, tal cual lo guardó el Presupuestador - no hay Storage/URL
+// firmada para esto).
+router.get('/despacho-v2/nv/:nv/medicion-media/:index', asyncRoute(async (req, res) => {
+  const item = await medicionMediaDb.getMedicionMediaItem(req.params.nv, req.params.index);
+  if (!item) return res.status(404).json({ error: 'No se encontró ese archivo' });
+  res.json({ ok: true, item });
+}));
+
 // POST /despacho-v2/viajes/:id/nv/:nv/marcar-entregado { tipo, pin? } -
 // cierre OFICIAL real (despacho: mismo PIN/QC que /despacho; instalación:
 // pone fecha_llegada_imput como ya hace /a, sin PIN porque no hay ninguno
@@ -152,6 +206,33 @@ router.post('/despacho-v2/viajes/:id/nv/:nv/avisar-siguiente', asyncRoute(async 
   if (!(await requireViajeDeMiCuadrilla(req, res, req.params.id))) return;
   const resultado = await db.avisarSiguienteParada({
     viajeId: req.params.id, nvOrigen: req.params.nv, enviadoPor: req.despachoUser.name,
+  });
+  res.json({ ok: resultado.ok, ...resultado });
+}));
+
+// GET /despacho-v2/viajes/:id/nv/:nv/paradas-restantes - para el picker de
+// "la ruta cambió, ¿cuál sigue?": todas las paradas-portón que venían
+// DESPUÉS de `nv` en el orden original (mismo criterio que
+// siguienteParadaPorton, por posición en la ruta - no hay forma de saber
+// acá cuáles ya se entregaron de verdad, solo cuáles no se habían pasado
+// todavía en el plan).
+router.get('/despacho-v2/viajes/:id/nv/:nv/paradas-restantes', asyncRoute(async (req, res) => {
+  if (!(await requireViajeDeMiCuadrilla(req, res, req.params.id))) return;
+  const paradas = await db.listParadasDeViaje(req.params.id);
+  const idx = paradas.findIndex((p) => p.tipo === 'porton' && p.nv === Number(req.params.nv));
+  const restantes = idx === -1 ? [] : paradas.slice(idx + 1).filter((p) => p.tipo === 'porton');
+  res.json({ ok: true, restantes });
+}));
+
+// POST /despacho-v2/viajes/:id/nv/:nvOrigen/avisar-parada/:nvDestino - la
+// ruta cambió y el usuario eligió a mano cuál es la próxima parada a
+// entregar (pedido explícito del usuario) - manda el aviso para ESA parada
+// puntual, no la que seguía en el orden original.
+router.post('/despacho-v2/viajes/:id/nv/:nvOrigen/avisar-parada/:nvDestino', asyncRoute(async (req, res) => {
+  if (!WHATSAPP_AVISO_HABILITADO) return res.status(403).json({ ok: false, error: 'Aviso automático de WhatsApp deshabilitado en este entorno' });
+  if (!(await requireViajeDeMiCuadrilla(req, res, req.params.id))) return;
+  const resultado = await db.avisarParadaElegida({
+    viajeId: req.params.id, nvOrigen: req.params.nvOrigen, nvDestino: req.params.nvDestino, enviadoPor: req.despachoUser.name,
   });
   res.json({ ok: resultado.ok, ...resultado });
 }));

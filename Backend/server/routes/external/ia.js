@@ -49,7 +49,21 @@ const BASE_SQL = `
 
     -- Fechas (ISO YYYY-MM-DD)
     to_char(p.fecha_nv,            'YYYY-MM-DD')  AS fecha_venta_nv,
-    to_char(p.fecha_med,           'YYYY-MM-DD')  AS fecha_medicion,
+
+    -- Medición: NO se usa p.fecha_med (portones.fecha_med) - probado contra datos
+    -- reales, esa columna queda en null en filas de Planta que todavía no
+    -- sincronizaron el dato aunque la medición ya esté hecha (mismo problema
+    -- documentado en Presupuestador/cotizador-back/src/routes/partner.routes.js,
+    -- fetchMeasurementDate, caso real NV 4270). La fuente confiable es
+    -- presupuestador_quotes (med.*, ver lateral join abajo).
+    COALESCE(med.fecha_realizada, med.fecha_programada)                       AS fecha_medicion,
+    CASE
+      WHEN med.requires_measurement IS NOT TRUE THEN NULL
+      WHEN med.fecha_realizada  IS NOT NULL      THEN 'realizada'
+      WHEN med.fecha_programada IS NOT NULL      THEN 'programada'
+      ELSE 'pendiente'
+    END                                                                      AS estado_medicion,
+
     to_char(p.fecha_prod,          'YYYY-MM-DD')  AS fecha_produccion,
     to_char(p.fecha_plan,          'YYYY-MM-DD')  AS fecha_despacho_plan,
     -- portones.fecha_plan_entrega no lo carga ningún flujo (siempre NULL,
@@ -143,6 +157,22 @@ const BASE_SQL = `
     LIMIT 1
   ) sq ON TRUE
 
+  -- Medición confiable (ver comentario arriba, en fecha_medicion/estado_medicion).
+  LEFT JOIN LATERAL (
+    SELECT
+      q2.requires_measurement,
+      to_char(q2.measurement_at,             'YYYY-MM-DD') AS fecha_realizada,
+      to_char(q2.measurement_scheduled_for,   'YYYY-MM-DD') AS fecha_programada
+    FROM public.presupuestador_quotes q2
+    WHERE q2.quote_kind = 'original'
+      AND (
+        q2.final_sale_order_name  ~ ('^[A-Za-z]*' || p.nv::text || '$')
+        OR q2.odoo_sale_order_name ~ ('^[A-Za-z]*' || p.nv::text || '$')
+      )
+    ORDER BY q2.id DESC
+    LIMIT 1
+  ) med ON TRUE
+
   -- Etapa más avanzada alcanzada en el workflow
   LEFT JOIN LATERAL (
     SELECT e.etapa::text, e.estado::text
@@ -177,6 +207,76 @@ const BASE_SQL = `
   -- Filtro: todos habilitados EXCEPTO los que tienen permitir_consulta_ia = false/no/0
   WHERE lower(coalesce(pv.data->>'permitir_consulta_ia', '')) NOT IN ('false', '0', 'no')
 `;
+
+// Portón/puerta que todavía no llegó a Planta (public.portones): el caso típico
+// es un NV ya generado en el Presupuestador pero con la medición final todavía
+// sin aprobar por el cliente, así que nunca se envió a producción. Antes de este
+// fallback, BASE_SQL devolvía 0 filas acá y la API respondía 404 "no existe",
+// indistinguible de un NV que en verdad no existe. Se restringe a catalog_kind
+// porton/puerta porque son los únicos tipos que en algún momento llegan a
+// public.portones (iPanel/Otros/Plegados viven en otras tablas, fuera del
+// alcance de este endpoint).
+async function fetchPendingByNv(nv) {
+  const { rows } = await pool.query(
+    `
+    SELECT
+      q.catalog_kind,
+      q.end_customer->>'name'                                          AS nombre_cliente,
+      to_char(q.created_at, 'YYYY-MM-DD')                               AS fecha_venta_nv,
+      q.requires_measurement,
+      to_char(q.measurement_at,           'YYYY-MM-DD')                 AS fecha_realizada,
+      to_char(q.measurement_scheduled_for,'YYYY-MM-DD')                 AS fecha_programada
+    FROM public.presupuestador_quotes q
+    WHERE q.quote_kind = 'original'
+      AND q.catalog_kind IN ('porton', 'puerta')
+      AND (
+        q.final_sale_order_name  ~ ('^[A-Za-z]*' || $1::text || '$')
+        OR q.odoo_sale_order_name ~ ('^[A-Za-z]*' || $1::text || '$')
+      )
+    ORDER BY q.id DESC
+    LIMIT 1
+    `,
+    [nv]
+  );
+
+  const row = rows[0];
+  if (!row) return null;
+
+  const estado_medicion = row.requires_measurement !== true
+    ? null
+    : row.fecha_realizada ? 'realizada' : row.fecha_programada ? 'programada' : 'pendiente';
+
+  return {
+    id_porton: null,
+    nv,
+    nlista: null,
+    partida: null,
+    nombre_cliente: row.nombre_cliente,
+    distribuidor: null,
+    etapa_actual_repo: null,
+    estado_etapa_actual: null,
+    etapa_ia: 'Pendiente de medición/producción',
+    fecha_venta_nv: row.fecha_venta_nv,
+    fecha_medicion: row.fecha_realizada || row.fecha_programada || null,
+    estado_medicion,
+    fecha_produccion: null,
+    fecha_despacho_plan: null,
+    fecha_plan_entrega: null,
+    sistema: null,
+    tipo_porton: row.catalog_kind,
+    color: null,
+    ancho_mm: null,
+    alto_mm: null,
+    revestimiento: null,
+    nombre_vendedor: null,
+    semana_entrega_estimada: null,
+    semana_produccion_estimada: null,
+    ubicacion_maps_url: null,
+    contacto_cliente_cel: null,
+    preprod_updated_at: null,
+    en_planta: false,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // GET /api/ia/portones/buscar?q=<texto>
@@ -226,10 +326,20 @@ router.get('/api/ia/portones/buscar', async (req, res) => {
       params
     );
 
+    const data = rows.map((r) => ({ ...r, en_planta: true }));
+
+    // Si el texto era un NV puntual y no apareció en Planta, puede ser un NV
+    // real pendiente de medición/producción (ver fetchPendingByNv) en vez de
+    // inexistente.
+    if (!data.length && nNum) {
+      const pending = await fetchPendingByNv(nNum);
+      if (pending) data.push(pending);
+    }
+
     return res.json({
-      found: rows.length > 0,
-      total: rows.length,
-      data: rows,
+      found: data.length > 0,
+      total: data.length,
+      data,
     });
   } catch (err) {
     console.error('ia/buscar error:', err);
@@ -257,19 +367,26 @@ router.get('/api/ia/portones/por-nv/:numero', async (req, res) => {
       [nNum]
     );
 
-    if (!rows.length) {
-      return res.status(404).json({
-        found: false,
+    if (rows.length) {
+      return res.json({
+        found: true,
         nv: nNum,
-        error: `No se encontró ningún portón con NV ${nNum}, o no tiene habilitada la consulta IA`,
+        total: rows.length,
+        data: rows.map((r) => ({ ...r, en_planta: true })),
       });
     }
 
-    return res.json({
-      found: true,
+    // Todavía no llegó a Planta: puede ser un NV real pendiente de medición o
+    // de envío a producción (ver fetchPendingByNv), no necesariamente inexistente.
+    const pending = await fetchPendingByNv(nNum);
+    if (pending) {
+      return res.json({ found: true, nv: nNum, total: 1, data: [pending] });
+    }
+
+    return res.status(404).json({
+      found: false,
       nv: nNum,
-      total: rows.length,
-      data: rows,
+      error: `No se encontró ningún portón con NV ${nNum}, o no tiene habilitada la consulta IA`,
     });
   } catch (err) {
     console.error('ia/por-nv error:', err);

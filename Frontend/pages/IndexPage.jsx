@@ -2,6 +2,7 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
 import { fetchAdminTickets, fetchReuniones } from '../src/api';
+import { useChatProgramadores } from '../src/components/chatProgramadores/chatContexto';
 import { todayISO10 } from '../src/utils/isoWeek';
 
 function parseJwtPayload(token) {
@@ -82,6 +83,11 @@ export default function IndexPage({ routes = [] }) {
   const isPrefabAdmin = has('prefabricados:admin');
   const isStAdmin = has('servicio_tecnico:admin');
   const isComprasAdmin = has('compras:admin');
+  // Nota: scheduling:admin sigue existiendo y protegiendo las rutas de API
+  // /admin/scheduling/* en el backend — acá en la nav ya no se usa solo, la
+  // sección "Programadores" (Motor de Reglas, Gantt, Tickets, Índice de
+  // Programación) se gatea con este scope nuevo, aparte.
+  const isProgramadoresAdmin = has('programadores:admin');
 
   const isPreprodOnly = isPreprodAdmin && !isQcAdmin && !isWfAdmin && !canUsers;
 
@@ -137,6 +143,11 @@ export default function IndexPage({ routes = [] }) {
     };
   }, []);
 
+  // Mensajes nuevos del Chat de Programadores desde la última vez que se
+  // abrió: lo mantiene en tiempo real ChatProgramadoresProvider
+  // (NonProductionLayout), el mismo número que el botón "💬 Chat" de arriba.
+  const { noLeidos: chatNoLeidosCount } = useChatProgramadores();
+
   const logout = () => {
     clearAdminSession();
     nav('/admin/login', { replace: true });
@@ -158,10 +169,31 @@ export default function IndexPage({ routes = [] }) {
     if (isComprasAdmin) out.push({ path: '/admin/insumos', label: 'Admin · Compras (Pedidos de Insumos)' });
     if (isComprasAdmin) out.push({ path: '/admin/insumos/entregas', label: 'Admin · Compras · Entregas de Insumos' });
     if (isComprasAdmin) out.push({ path: '/admin/insumos/config', label: 'Admin · Compras · Config Categorías↔Sección' });
-    out.push({ path: '/admin/tickets', label: 'Admin · Tickets' });
-    out.push({ path: '/admin/indice-programacion', label: 'Admin · Índice de Programación (BETA)' });
     return out;
-  }, [isPreprodOnly, isQcAdmin, isWfAdmin, canUsers, isPrefabAdmin, isStAdmin, isComprasAdmin, pendingTicketsCount, reunionesHoyCount]);
+  }, [isPreprodOnly, isQcAdmin, isWfAdmin, canUsers, isPrefabAdmin, isStAdmin, isComprasAdmin]);
+
+  // Sección "Programadores" — scope nuevo y separado (programadores:admin).
+  // Motor de reglas de tiempo y sus dos pantallas satélite, más Tickets,
+  // Reuniones y Tareas e Índice de Programación (movidos de Admin general a
+  // pedido puntual, aunque signifique que dejan de verlos los admins sin este
+  // scope - ver quiénes lo tienen hoy antes de repetir el movimiento).
+  const programadoresRoutes = useMemo(() => {
+    if (isPreprodOnly || !isProgramadoresAdmin) return [];
+    return [
+      { path: '/admin/scheduling', label: 'Admin · Motor de Reglas de Tiempo (Beta)' },
+      { path: '/admin/scheduling/reglas', label: 'Admin · Reglas de Desvío (Beta)' },
+      { path: '/admin/scheduling/gantt', label: 'Admin · Gantt de Producción (Beta)' },
+      {
+        path: '/admin/tickets', label: 'Admin · Tickets', badge: pendingTicketsCount,
+        badgeTitle: `${pendingTicketsCount} ticket${pendingTicketsCount === 1 ? '' : 's'} pendiente${pendingTicketsCount === 1 ? '' : 's'}`,
+      },
+      {
+        path: '/admin/reuniones', label: 'Admin · Reuniones y Tareas', badge: reunionesHoyCount,
+        badgeTitle: `${reunionesHoyCount} reunión${reunionesHoyCount === 1 ? '' : 'es'} hoy`,
+      },
+      { path: '/admin/indice-programacion', label: 'Admin · Índice de Programación (BETA)' },
+    ];
+  }, [isPreprodOnly, isProgramadoresAdmin, pendingTicketsCount, reunionesHoyCount]);
 
   const opsRoutes = useMemo(() => {
     if (isPreprodOnly) return [];
@@ -209,6 +241,19 @@ export default function IndexPage({ routes = [] }) {
     ];
   }, [isPreprodOnly, isPreprodAdmin, isQcAdmin, isWfAdmin, preprodRoutes]);
 
+  // Lo que se muestra en la sección "Programadores": el Chat primero (con su
+  // badge de mensajes nuevos) y después programadoresRoutes. Mismo gate.
+  const seccionProgramadores = useMemo(() => {
+    if (isPreprodOnly || !isProgramadoresAdmin) return programadoresRoutes;
+    return [
+      {
+        path: '/admin/programadores/chat', label: 'Admin · Chat de Programadores', badge: chatNoLeidosCount,
+        badgeTitle: `${chatNoLeidosCount} mensaje${chatNoLeidosCount === 1 ? '' : 's'} nuevo${chatNoLeidosCount === 1 ? '' : 's'}`,
+      },
+      ...programadoresRoutes,
+    ];
+  }, [isPreprodOnly, isProgramadoresAdmin, programadoresRoutes, chatNoLeidosCount]);
+
   const NavBadge = ({ r }) => {
     if (!r.badge) return null;
     return (
@@ -249,7 +294,7 @@ export default function IndexPage({ routes = [] }) {
     </li>
   );
 
-  const hasAny = publicRoutes.length || adminRoutes.length || opsRoutes.length || revisionRoutes.length || infoRoutes.length;
+  const hasAny = publicRoutes.length || adminRoutes.length || seccionProgramadores.length || opsRoutes.length || revisionRoutes.length || infoRoutes.length;
 
   return (
     <div className="container">
@@ -290,6 +335,19 @@ export default function IndexPage({ routes = [] }) {
                 <span className="idx-pill">Admin</span>
               </div>
               <div className="idx-section__body"><ul className="idx-links">{adminRoutes.map((r) => <LinkRow key={r.path} r={r} />)}</ul></div>
+            </section>
+          )}
+
+          {seccionProgramadores.length > 0 && (
+            <section className="idx-section idx-section--admin">
+              <div className="idx-section__head">
+                <div>
+                  <div className="idx-section__title">Programadores</div>
+                  <div className="idx-section__sub">Chat del equipo, motor de reglas de tiempo, tickets e índice de programación</div>
+                </div>
+                <span className="idx-pill">Programadores</span>
+              </div>
+              <div className="idx-section__body"><ul className="idx-links">{seccionProgramadores.map((r) => <LinkRow key={r.path} r={r} />)}</ul></div>
             </section>
           )}
 

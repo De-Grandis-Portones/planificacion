@@ -119,6 +119,24 @@ async function listHistorialPorNv(nv) {
   return { solicitudesPrevias: solicitudesQ.rows, historial: historialQ.rows };
 }
 
+// Para despacho-v2: ¿este NV tiene una solicitud de ST todavía sin resolver?
+// (cualquier estado menos 'resuelto'/'cancelado'). Se usa para mostrar en la
+// ficha que la instalación quedó cerrada "con un problema reportado" en vez
+// de simplemente desaparecer - ver MarcarEntregadoSection en DespachoV2Page.
+async function getSolicitudAbiertaPorNv(nv) {
+  const nNv = Number(nv);
+  if (!Number.isInteger(nNv)) return null;
+  const { rows } = await pool.query(
+    `select id, descripcion, estado, created_at
+     from public.servicio_tecnico_solicitudes
+     where nv = $1 and estado not in ('resuelto', 'cancelado')
+     order by created_at desc
+     limit 1;`,
+    [nNv]
+  );
+  return rows[0] || null;
+}
+
 // ===========================================================================
 // CRUD de solicitudes
 // ===========================================================================
@@ -225,7 +243,7 @@ async function agregarHistorial(solicitudId, { tipo, autor, texto, attachment })
 }
 
 module.exports = {
-  resolverInfoNv, listHistorialPorNv,
+  resolverInfoNv, listHistorialPorNv, getSolicitudAbiertaPorNv,
   listSolicitudes, getSolicitud, createSolicitud, updateSolicitud, deleteSolicitud,
   agregarHistorial,
 };

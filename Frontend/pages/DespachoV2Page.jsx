@@ -11,11 +11,20 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   fetchDespachoV2QcUsers, despachoV2Login, fetchDespachoV2Viajes, marcarSalidaDespachoV2, marcarLlegadaDespachoV2,
   fetchParadasDespachoV2, fetchNvDespachoV2, fetchNvAdjuntosDespachoV2, crearSolicitudStDespachoV2,
+  fetchNvMedicionMediaDespachoV2, fetchMedicionMediaItemDespachoV2,
   fetchRemitosPorNv, getDespachoV2Token, getDespachoV2User, setDespachoV2Session, clearDespachoV2Session,
   marcarEntregadoDespachoV2, avisarSiguienteDespachoV2,
+  fetchParadasRestantesDespachoV2, avisarParadaElegidaDespachoV2,
   fetchGastosDespachoV2, crearGastoDespachoV2, actualizarGastoDespachoV2, deleteGastoDespachoV2,
+  fetchChecklistDespachoV2,
   API_BASE_URL,
 } from '../src/api';
+// Mismo modal de "Pedido de insumos del día" que ya usa /despacho (y el
+// resto de los tableros de producción) - pedido explícito del usuario: la
+// cuadrilla de /despacho_v2 tiene que poder hacer los mismos pedidos. Sin
+// auth de por medio (routes/public/insumos.js es público, solo pide PIN al
+// confirmar), así que se reusa tal cual, sin tocarlo.
+import InsumosCartButton from '../src/components/InsumosCartButton';
 
 // Motivos de gasto - catálogo simple hoy, "después vamos a agregar más
 // motivos" (pedido explícito del usuario): alcanza con extender este array,
@@ -54,23 +63,6 @@ function formatearDuracion(horas) {
   const min = Math.round((horas - h) * 60);
   const horaTxt = `${h} hora${h === 1 ? '' : 's'}`;
   return min > 0 ? `${horaTxt} y ${min} minutos` : horaTxt;
-}
-// Pedido explícito del usuario, texto tal cual lo escribió (ajustado a los
-// datos reales disponibles). No incluye fotos - wa.me solo prellena texto,
-// ver nota en el commit/memoria: para adjuntar fotos automáticamente hace
-// falta la API de WhatsApp Business (evaluar después, confirmado con el
-// usuario).
-function construirMensajeEnCamino({ nombreCliente, horasTramo, cuadrillaMiembros, vehiculoNombre }) {
-  const lineas = [
-    `Buenos días${nombreCliente ? ` ${nombreCliente}` : ''}, este es un mensaje automático enviado por el sistema de De Grandis Portones.`,
-    `Le comunicamos que su portón estará llegando en aproximadamente ${formatearDuracion(horasTramo)}.`,
-    '',
-    'La cuadrilla que le realizará la entrega / instalación está conformada por:',
-    ...(cuadrillaMiembros?.length ? cuadrillaMiembros.map((m) => `- ${m.name}${m.rol ? ` (${m.rol})` : ''}`) : ['- (sin cargar)']),
-    '',
-    `El vehículo que le está llevando el producto es ${vehiculoNombre || 'un camión'}.`,
-  ];
-  return lineas.join('\n');
 }
 function horaLegible(iso) {
   if (!iso) return '';
@@ -274,6 +266,72 @@ function ConfirmarRutaSheet({ siguienteParada, busy, resultado, onSi, onNo, onCe
   );
 }
 
+// "La ruta cambió, ¿cuál sigue?" - se abre desde el "No" de ConfirmarRutaSheet
+// (pedido explícito del usuario). Lista las paradas-portón que quedaban
+// después de la actual en el orden original armado por el sistema; al
+// elegir una, manda el aviso para ESA parada puntual.
+function ElegirParadaSheet({ viajeId, nvOrigen, busy, resultado, onElegir, onCerrar }) {
+  const [paradas, setParadas] = useState(null);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    if (resultado) return;
+    fetchParadasRestantesDespachoV2(viajeId, nvOrigen)
+      .then((d) => setParadas(d?.restantes || []))
+      .catch((e) => setErr(e?.response?.data?.error || e.message));
+  }, [viajeId, nvOrigen, resultado]);
+
+  return (
+    <div style={{ ...s.overlay, zIndex: 10000 }} onMouseDown={(e) => { if (e.target === e.currentTarget) onCerrar(); }}>
+      <div style={{ ...s.hoja, maxWidth: 400 }}>
+        {resultado ? (
+          <>
+            <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 14, textAlign: 'center' }}>
+              {resultado.ok ? '✅ Aviso enviado' : '⚠️ No se pudo avisar'}
+            </div>
+            <div style={{ fontSize: 13, opacity: 0.8, marginBottom: 16, textAlign: 'center' }}>
+              {resultado.ok
+                ? `Le avisamos a ${resultado.nombreCliente || 'el cliente elegido'} por WhatsApp.`
+                : (resultado.error || 'Error desconocido')}
+            </div>
+            <button type="button" style={s.botonPrimario} onClick={onCerrar}>Listo</button>
+          </>
+        ) : (
+          <>
+            <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 10, textAlign: 'center' }}>¿Cuál es la próxima parada?</div>
+            <div style={{ fontSize: 13, opacity: 0.8, marginBottom: 14, textAlign: 'center' }}>
+              Elegí a cuál de las paradas que quedan le avisamos que está en camino.
+            </div>
+            {err ? <div style={{ color: 'crimson', fontWeight: 700, fontSize: 13, marginBottom: 10 }}>{err}</div> : null}
+            {paradas == null ? (
+              <div style={{ textAlign: 'center', opacity: 0.7, marginBottom: 12 }}>Cargando…</div>
+            ) : paradas.length === 0 ? (
+              <div style={{ textAlign: 'center', opacity: 0.7, marginBottom: 12 }}>No quedan más paradas en esta ruta.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+                {paradas.map((p) => (
+                  <button
+                    key={p.nv} type="button" disabled={busy} onClick={() => onElegir(p.nv)}
+                    style={{ ...s.botonBloque, textAlign: 'left', padding: 12 }}
+                  >
+                    <div style={{ fontWeight: 900 }}>NV {p.nv} · {p.nombre_cliente || 'Cliente sin nombre'}</div>
+                    <div style={{ fontSize: 12, opacity: 0.7 }}>
+                      {[p.distribuidor, p.localidad].filter(Boolean).join(' · ') || '—'} · llegando en aproximadamente {formatearDuracion(p.horas_tramo)}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+            <button type="button" style={{ background: 'none', border: 'none', color: '#6b7280', fontSize: 13, fontWeight: 700, padding: 6, textAlign: 'center' }} disabled={busy} onClick={onCerrar}>
+              Cancelar
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ===========================================================================
 // "Marcar entregado/instalado" - cierre OFICIAL real: despacho pide PIN
 // (mismo mecanismo que /despacho), instalación no (no existe ese mecanismo
@@ -281,17 +339,26 @@ function ConfirmarRutaSheet({ siguienteParada, busy, resultado, onSi, onNo, onCe
 // avisar por WhatsApp a la siguiente parada de la ruta - pero antes SIEMPRE
 // pregunta si la ruta sigue igual.
 // ===========================================================================
-function MarcarEntregadoSection({ nv, viaje, parada, onParadaCambiada }) {
+function MarcarEntregadoSection({ nv, viaje, parada, onParadaCambiada, stAbierta }) {
   const [tiposPendientes, setTiposPendientes] = useState(() => parada?.tipos_pendientes || []);
   const [pinAbierto, setPinAbierto] = useState(false);
   const [marcando, setMarcando] = useState(false);
   const [err, setErr] = useState('');
   const [confirmarRuta, setConfirmarRuta] = useState(null); // { siguienteParada } | null
   const [resultadoAviso, setResultadoAviso] = useState(null);
+  const [eligiendoParada, setEligiendoParada] = useState(false); // "la ruta cambió" -> picker
+  // "¿Quedó todo bien o hubo un problema?" - paso intermedio al cerrar la
+  // instalación (pedido explícito del usuario). Si hubo un problema, se
+  // exige cargar la solicitud de ST/PV ANTES de cerrar la instalación (así
+  // nunca queda "cerrada en silencio" sin que el problema quede registrado
+  // en algún lado) - recién al enviarla con éxito se llama confirmarMarcado.
+  const [preguntandoInstalacion, setPreguntandoInstalacion] = useState(false);
+  const [mostrarStCierre, setMostrarStCierre] = useState(false);
+  const [stAbiertaLocal, setStAbiertaLocal] = useState(null);
 
   if (!parada) return null;
 
-  const cerrarTodo = () => { setConfirmarRuta(null); setResultadoAviso(null); };
+  const cerrarTodo = () => { setConfirmarRuta(null); setResultadoAviso(null); setEligiendoParada(false); };
 
   const confirmarMarcado = async (tipo, pin) => {
     setMarcando(true);
@@ -325,7 +392,42 @@ function MarcarEntregadoSection({ nv, viaje, parada, onParadaCambiada }) {
     }
   };
 
-  if (!tiposPendientes.length) return null;
+  const avisarElegida = async (nvDestino) => {
+    setMarcando(true);
+    try {
+      const r = await avisarParadaElegidaDespachoV2(viaje.id, nv, nvDestino);
+      setResultadoAviso(r);
+    } catch (e) {
+      setResultadoAviso({ ok: false, error: e?.response?.data?.error || e.message });
+    } finally {
+      setMarcando(false);
+    }
+  };
+
+  const alEnviarStDeCierre = (solicitud) => {
+    setMostrarStCierre(false);
+    setStAbiertaLocal(solicitud || null);
+    confirmarMarcado('instalacion', null);
+  };
+
+  const stVisible = stAbiertaLocal || stAbierta;
+
+  if (!tiposPendientes.length) {
+    if (!stVisible) return null;
+    return (
+      <div style={{ ...s.card, marginBottom: 16, background: '#fffbeb', border: '1px solid #fde68a' }}>
+        <div style={{ fontWeight: 900, fontSize: 15, textAlign: 'center' }}>✅ Instalación terminada</div>
+        <div style={{ fontWeight: 800, color: '#b45309', fontSize: 13, textAlign: 'center', marginTop: 2 }}>
+          ⚠️ Con problema reportado (pendiente)
+        </div>
+        {stVisible.descripcion ? (
+          <div style={{ background: '#fff', borderRadius: 10, padding: 10, marginTop: 10, fontSize: 13, opacity: 0.85 }}>
+            {stVisible.descripcion}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div style={{ marginBottom: 16 }}>
@@ -336,9 +438,26 @@ function MarcarEntregadoSection({ nv, viaje, parada, onParadaCambiada }) {
           </button>
         ) : null}
         {tiposPendientes.includes('instalacion') ? (
-          <button type="button" style={s.botonPrimario} disabled={marcando} onClick={() => confirmarMarcado('instalacion', null)}>
-            {marcando ? 'Marcando…' : '✅ Marcar instalación terminada'}
-          </button>
+          preguntandoInstalacion ? (
+            <div style={{ ...s.card, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ fontWeight: 800, fontSize: 15, textAlign: 'center', marginBottom: 2 }}>
+                ¿Quedó todo bien o hubo algún problema?
+              </div>
+              <button type="button" style={{ ...s.botonPrimario, background: '#16a34a' }} disabled={marcando} onClick={() => confirmarMarcado('instalacion', null)}>
+                {marcando ? 'Marcando…' : '✅ Todo bien'}
+              </button>
+              <button type="button" style={{ ...s.botonPrimario, background: '#d97706' }} disabled={marcando} onClick={() => { setPreguntandoInstalacion(false); setMostrarStCierre(true); }}>
+                ⚠️ Hubo un problema
+              </button>
+              <button type="button" style={{ background: 'none', border: 'none', color: '#6b7280', fontSize: 13, fontWeight: 700, padding: 2 }} disabled={marcando} onClick={() => setPreguntandoInstalacion(false)}>
+                Cancelar
+              </button>
+            </div>
+          ) : (
+            <button type="button" style={s.botonPrimario} disabled={marcando} onClick={() => setPreguntandoInstalacion(true)}>
+              ✅ Marcar instalación terminada
+            </button>
+          )
         ) : null}
       </div>
       {err ? <div style={{ color: 'crimson', fontWeight: 700, fontSize: 13, marginTop: 8 }}>{err}</div> : null}
@@ -351,15 +470,30 @@ function MarcarEntregadoSection({ nv, viaje, parada, onParadaCambiada }) {
         />
       ) : null}
 
-      {confirmarRuta ? (
+      {confirmarRuta && !eligiendoParada ? (
         <ConfirmarRutaSheet
           siguienteParada={confirmarRuta.siguienteParada}
           busy={marcando}
           resultado={resultadoAviso}
           onSi={avisar}
-          onNo={cerrarTodo}
+          onNo={() => setEligiendoParada(true)}
           onCerrar={cerrarTodo}
         />
+      ) : null}
+
+      {eligiendoParada ? (
+        <ElegirParadaSheet
+          viajeId={viaje.id}
+          nvOrigen={nv}
+          busy={marcando}
+          resultado={resultadoAviso}
+          onElegir={avisarElegida}
+          onCerrar={cerrarTodo}
+        />
+      ) : null}
+
+      {mostrarStCierre ? (
+        <StFormSheet nv={nv} onClose={() => setMostrarStCierre(false)} onEnviada={alEnviarStDeCierre} />
       ) : null}
     </div>
   );
@@ -371,6 +505,8 @@ function MarcarEntregadoSection({ nv, viaje, parada, onParadaCambiada }) {
 function NvDetailSheet({ nv, viaje, parada, onParadaCambiada, onClose }) {
   const [detalle, setDetalle] = useState(null);
   const [adjuntos, setAdjuntos] = useState([]);
+  const [medicionMedia, setMedicionMedia] = useState([]);
+  const [medioAbierto, setMedioAbierto] = useState(null); // { index, nombre_archivo, tipo_mime } | null
   const [remitos, setRemitos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
@@ -382,11 +518,13 @@ function NvDetailSheet({ nv, viaje, parada, onParadaCambiada, onClose }) {
     Promise.all([
       fetchNvDespachoV2(nv).catch(() => null),
       fetchNvAdjuntosDespachoV2(nv).catch(() => null),
+      fetchNvMedicionMediaDespachoV2(nv).catch(() => null),
       fetchRemitosPorNv(nv).catch(() => null),
     ])
-      .then(([d, a, r]) => {
+      .then(([d, a, m, r]) => {
         setDetalle(d?.nv || null);
         setAdjuntos(a?.adjuntos || []);
+        setMedicionMedia(m?.media || []);
         setRemitos(r?.items || []);
       })
       .catch((e) => setErr(e?.response?.data?.error || e.message))
@@ -394,15 +532,6 @@ function NvDetailSheet({ nv, viaje, parada, onParadaCambiada, onClose }) {
   }, [nv]);
 
   const waPerfil = waLink(detalle?.telefono);
-  const waEnCamino = waLink(
-    detalle?.telefono,
-    construirMensajeEnCamino({
-      nombreCliente: detalle?.nombre_cliente,
-      horasTramo: parada?.horas_tramo,
-      cuadrillaMiembros: viaje?.cuadrilla_miembros,
-      vehiculoNombre: viaje?.vehiculo_nombre,
-    })
-  );
 
   return (
     <div style={s.overlay} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -418,7 +547,7 @@ function NvDetailSheet({ nv, viaje, parada, onParadaCambiada, onClose }) {
           <div style={{ color: 'crimson', fontWeight: 700 }}>{err}</div>
         ) : (
           <>
-            <MarcarEntregadoSection nv={nv} viaje={viaje} parada={parada} onParadaCambiada={onParadaCambiada} />
+            <MarcarEntregadoSection nv={nv} viaje={viaje} parada={parada} onParadaCambiada={onParadaCambiada} stAbierta={detalle?.st_abierta} />
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 16 }}>
               <Campo label="Cliente" valor={detalle?.nombre_cliente} />
@@ -432,11 +561,6 @@ function NvDetailSheet({ nv, viaje, parada, onParadaCambiada, onClose }) {
               {waPerfil ? (
                 <a href={waPerfil} target="_blank" rel="noopener noreferrer" style={{ ...s.botonBloque, background: '#25D366', color: '#fff', border: 'none' }}>
                   💬 WhatsApp al cliente
-                </a>
-              ) : null}
-              {waEnCamino ? (
-                <a href={waEnCamino} target="_blank" rel="noopener noreferrer" style={{ ...s.botonBloque, background: '#128C7E', color: '#fff', border: 'none' }} title="Abre WhatsApp con el mensaje ya escrito - falta que lo confirmes/mandes vos">
-                  🚚 Avisar que está en camino
                 </a>
               ) : null}
               {detalle?.maps_url ? (
@@ -477,6 +601,25 @@ function NvDetailSheet({ nv, viaje, parada, onParadaCambiada, onClose }) {
             )}
             <div style={{ fontSize: 11, opacity: 0.55, marginBottom: 16 }}>Fotos adjuntas desde acá: más adelante.</div>
 
+            <div style={{ fontWeight: 900, fontSize: 14, marginBottom: 6 }}>📸 Fotos/Videos de la medición</div>
+            {medicionMedia.length === 0 ? (
+              <div style={{ fontSize: 13, opacity: 0.6, marginBottom: 16 }}>El vendedor no adjuntó fotos/videos al medir este portón.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16 }}>
+                {medicionMedia.map((m) => (
+                  <button
+                    key={m.index} type="button"
+                    onClick={() => setMedioAbierto({ index: m.index, nombre_archivo: m.nombre_archivo, tipo_mime: m.tipo_mime })}
+                    style={{ ...s.botonBloque, textAlign: 'left', display: 'flex', gap: 8, alignItems: 'center' }}
+                  >
+                    <span>{String(m.tipo_mime || '').startsWith('video/') ? '🎥' : '🖼️'}</span>
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13 }}>{m.nombre_archivo}</span>
+                    <span style={{ fontSize: 11, opacity: 0.6 }}>{tamanoLegible(m.tamano_bytes)}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
             <button type="button" style={{ ...s.botonPrimario, background: '#dc2626' }} onClick={() => setMostrarSt(true)}>
               🛠️ ST/PV — Reportar un problema
             </button>
@@ -484,6 +627,48 @@ function NvDetailSheet({ nv, viaje, parada, onParadaCambiada, onClose }) {
         )}
       </div>
       {mostrarSt ? <StFormSheet nv={nv} onClose={() => setMostrarSt(false)} /> : null}
+      {medioAbierto ? (
+        <MedicionMediaViewer nv={nv} medio={medioAbierto} onClose={() => setMedioAbierto(null)} />
+      ) : null}
+    </div>
+  );
+}
+
+// Visor de UNA foto/video de medición - se pide recién acá (no en el
+// listado) porque el archivo entero viaja en base64 dentro del JSON y puede
+// pesar varios MB (hasta 30MB un video) - pedirlos todos de entrada haría
+// re-lento el detalle del portón para nada, si la cuadrilla ni los mira.
+function MedicionMediaViewer({ nv, medio, onClose }) {
+  const [dataUrl, setDataUrl] = useState(null);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    setDataUrl(null);
+    setErr('');
+    fetchMedicionMediaItemDespachoV2(nv, medio.index)
+      .then((d) => setDataUrl(d?.item?.data_url || null))
+      .catch((e) => setErr(e?.response?.data?.error || e.message));
+  }, [nv, medio.index]);
+
+  const esVideo = String(medio.tipo_mime || '').startsWith('video/');
+
+  return (
+    <div style={{ ...s.overlay, zIndex: 10001 }} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ ...s.hoja, maxWidth: 480 }}>
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
+          <div style={{ fontWeight: 900, fontSize: 15, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{medio.nombre_archivo}</div>
+          <button type="button" onClick={onClose} style={{ marginLeft: 8, background: 'none', border: 'none', fontSize: 22, lineHeight: 1, padding: 4 }}>✕</button>
+        </div>
+        {err ? (
+          <div style={{ color: 'crimson', fontWeight: 700, textAlign: 'center', padding: 20 }}>{err}</div>
+        ) : !dataUrl ? (
+          <div style={{ opacity: 0.7, textAlign: 'center', padding: 20 }}>Cargando…</div>
+        ) : esVideo ? (
+          <video src={dataUrl} controls style={{ width: '100%', borderRadius: 10, background: '#000' }} />
+        ) : (
+          <img src={dataUrl} alt={medio.nombre_archivo} style={{ width: '100%', borderRadius: 10 }} />
+        )}
+      </div>
     </div>
   );
 }
@@ -501,7 +686,7 @@ function Campo({ label, valor }) {
 // ===========================================================================
 // ST/PV: reportar un problema (Servicio Técnico / Post Venta) con foto/video
 // ===========================================================================
-function StFormSheet({ nv, onClose }) {
+function StFormSheet({ nv, onClose, onEnviada }) {
   const [descripcion, setDescripcion] = useState('');
   const [archivo, setArchivo] = useState(null); // { name, type, size, data_url } | null
   const [subiendo, setSubiendo] = useState(false);
@@ -528,8 +713,9 @@ function StFormSheet({ nv, onClose }) {
     setSubiendo(true);
     setErr('');
     try {
-      await crearSolicitudStDespachoV2(nv, { descripcion: descripcion.trim(), attachment: archivo });
+      const r = await crearSolicitudStDespachoV2(nv, { descripcion: descripcion.trim(), attachment: archivo });
       setOk(true);
+      onEnviada?.(r?.solicitud || null);
     } catch (e) {
       setErr(e?.response?.data?.error || e.message);
     } finally {
@@ -541,14 +727,13 @@ function StFormSheet({ nv, onClose }) {
     <div style={{ ...s.overlay, zIndex: 10000 }} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div style={s.hoja}>
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
-          <div style={{ fontWeight: 900, fontSize: 18 }}>🛠️ ST/PV — NV {nv}</div>
+          <div style={{ fontWeight: 900, fontSize: 18 }}>Reportar un problema — NV {nv}</div>
           <button type="button" onClick={onClose} style={{ marginLeft: 'auto', background: 'none', border: 'none', fontSize: 22, lineHeight: 1, padding: 4 }}>✕</button>
         </div>
 
         {ok ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center', padding: '20px 0' }}>
-            <div style={{ fontSize: 40 }}>✅</div>
-            <div style={{ fontWeight: 800, fontSize: 16, textAlign: 'center' }}>Solicitud enviada</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '10px 0' }}>
+            <div style={{ fontWeight: 900, fontSize: 16, textAlign: 'center' }}>✅ Solicitud enviada</div>
             <button type="button" style={s.botonPrimario} onClick={onClose}>Listo</button>
           </div>
         ) : (
@@ -806,6 +991,66 @@ function ParadaRow({ parada, viaje, onAbrirNv, onAbrirExtra }) {
   );
 }
 
+// "Antes de arrancar…" - checklist configurable (/admin/logistica-fechas,
+// panel de configuración, botón CheckList) que la cuadrilla debe completar
+// para habilitar el botón Play (pedido explícito del usuario). Si el admin
+// no cargó ítems para este tipo de viaje, ni se llega a mostrar (ver
+// tocarPlay: arranca directo).
+function ChecklistSheet({ tipo, busy, errorExterno, onConfirmar, onCerrar }) {
+  const [items, setItems] = useState(null);
+  const [marcados, setMarcados] = useState(() => new Set());
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    fetchChecklistDespachoV2(tipo)
+      .then((d) => setItems(d?.items || []))
+      .catch((e) => setErr(e?.response?.data?.error || e.message));
+  }, [tipo]);
+
+  const toggle = (id) => {
+    setMarcados((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const todoTildado = Array.isArray(items) && items.length > 0 && items.every((it) => marcados.has(it.id));
+
+  return (
+    <div style={{ ...s.overlay, zIndex: 10000 }} onMouseDown={(e) => { if (e.target === e.currentTarget) onCerrar(); }}>
+      <div style={{ ...s.hoja, maxWidth: 420 }}>
+        <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 10, textAlign: 'center' }}>Antes de arrancar…</div>
+        <div style={{ fontSize: 13, opacity: 0.8, marginBottom: 14, textAlign: 'center' }}>
+          Tildá cada ítem para habilitar el viaje.
+        </div>
+        {err || errorExterno ? <div style={{ color: 'crimson', fontWeight: 700, fontSize: 13, marginBottom: 10, textAlign: 'center' }}>{err || errorExterno}</div> : null}
+        {items == null ? (
+          <div style={{ textAlign: 'center', opacity: 0.7, marginBottom: 12 }}>Cargando…</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+            {items.map((it) => (
+              <label
+                key={it.id}
+                style={{ ...s.botonBloque, display: 'flex', gap: 10, alignItems: 'center', cursor: 'pointer', background: marcados.has(it.id) ? '#dcfce7' : '#fff' }}
+              >
+                <input type="checkbox" checked={marcados.has(it.id)} onChange={() => toggle(it.id)} style={{ width: 18, height: 18, flex: '0 0 auto' }} />
+                <span style={{ fontSize: 14 }}>{it.texto}</span>
+              </label>
+            ))}
+          </div>
+        )}
+        <button type="button" style={s.botonPrimario} disabled={busy || !todoTildado} onClick={() => onConfirmar(items.map((it) => it.id))}>
+          {busy ? 'Arrancando…' : '▶ Confirmar y arrancar viaje'}
+        </button>
+        <button type="button" style={{ background: 'none', border: 'none', color: '#6b7280', fontSize: 13, fontWeight: 700, padding: 10, textAlign: 'center', width: '100%' }} disabled={busy} onClick={onCerrar}>
+          Cancelar
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ===========================================================================
 // Tarjeta de un viaje
 // ===========================================================================
@@ -816,6 +1061,8 @@ function ViajeCard({ viaje, onCambio, onAbrirNv, onAbrirExtra }) {
   const [marcando, setMarcando] = useState(false);
   const [marcandoLlegada, setMarcandoLlegada] = useState(false);
   const [mostrarGastos, setMostrarGastos] = useState(false);
+  const [mostrarChecklist, setMostrarChecklist] = useState(false);
+  const [errChecklist, setErrChecklist] = useState('');
 
   const toggleExpandir = async () => {
     if (!expandido && paradas == null) {
@@ -843,12 +1090,35 @@ function ViajeCard({ viaje, onCambio, onAbrirNv, onAbrirExtra }) {
     } catch {}
   };
 
-  const marcarSalida = async () => {
+  // Botón Play: si el admin configuró ítems de checklist para el tipo de
+  // este viaje (solo_despacho | con_instalacion), primero hay que tildarlos
+  // todos (pedido explícito del usuario) - si no hay ninguno cargado,
+  // arranca directo, como antes de este feature.
+  const tocarPlay = async () => {
     if (marcando || viaje.hora_salida_real) return;
     setMarcando(true);
     try {
-      await marcarSalidaDespachoV2(viaje.id);
+      const { items } = await fetchChecklistDespachoV2(viaje.checklist_tipo);
+      if (items?.length) {
+        setMostrarChecklist(true);
+      } else {
+        await marcarSalidaDespachoV2(viaje.id, { tipo: viaje.checklist_tipo, item_ids: [] });
+        onCambio();
+      }
+    } finally {
+      setMarcando(false);
+    }
+  };
+
+  const confirmarChecklist = async (itemIds) => {
+    setMarcando(true);
+    setErrChecklist('');
+    try {
+      await marcarSalidaDespachoV2(viaje.id, { tipo: viaje.checklist_tipo, item_ids: itemIds });
+      setMostrarChecklist(false);
       onCambio();
+    } catch (e) {
+      setErrChecklist(e?.response?.data?.error || e.message);
     } finally {
       setMarcando(false);
     }
@@ -879,7 +1149,7 @@ function ViajeCard({ viaje, onCambio, onAbrirNv, onAbrirExtra }) {
           </div>
         </div>
         <button
-          type="button" onClick={marcarSalida} disabled={marcando}
+          type="button" onClick={tocarPlay} disabled={marcando}
           style={{
             flex: '0 0 auto', width: 44, height: 44, borderRadius: 999, border: 'none',
             background: viaje.hora_salida_real ? '#16a34a' : BRAND, color: '#fff', fontSize: 18,
@@ -948,6 +1218,15 @@ function ViajeCard({ viaje, onCambio, onAbrirNv, onAbrirExtra }) {
       ) : null}
 
       {mostrarGastos ? <GastosSheet viaje={viaje} onClose={() => setMostrarGastos(false)} /> : null}
+      {mostrarChecklist ? (
+        <ChecklistSheet
+          tipo={viaje.checklist_tipo}
+          busy={marcando}
+          errorExterno={errChecklist}
+          onConfirmar={confirmarChecklist}
+          onCerrar={() => { setMostrarChecklist(false); setErrChecklist(''); }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -985,9 +1264,12 @@ function ViajesScreen({ qcUser, onSalir }) {
     <div style={s.pantalla}>
       <div style={s.header}>
         <div style={{ fontWeight: 900, fontSize: 16 }}>👋 {qcUser?.name}</div>
-        <button type="button" onClick={() => { clearDespachoV2Session(); onSalir(); }} style={{ marginLeft: 'auto', background: 'rgba(255,255,255,.15)', border: 'none', color: '#fff', borderRadius: 8, padding: '6px 10px', fontSize: 12, fontWeight: 700 }}>
-          Salir
-        </button>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+          <InsumosCartButton seccion="despacho" />
+          <button type="button" onClick={() => { clearDespachoV2Session(); onSalir(); }} style={{ background: 'rgba(255,255,255,.15)', border: 'none', color: '#fff', borderRadius: 8, padding: '6px 10px', fontSize: 12, fontWeight: 700 }}>
+            Salir
+          </button>
+        </div>
       </div>
 
       <div style={{ padding: '10px 14px', display: 'flex', gap: 6 }}>

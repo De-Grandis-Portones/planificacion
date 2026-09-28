@@ -1,24 +1,15 @@
-// pages/admin/AdminTicketsPage.jsx — ver todos los tickets, responderlos y
-// cambiarles el estado. Sin scope propio: cualquier admin logueado entra,
-// igual que /admin/indice-programacion. Las respuestas que se mandan acá se
-// ven reflejadas en "Mis tickets" del widget de quien creó el ticket
-// (Frontend/src/components/TicketWidget.jsx).
+// pages/admin/AdminTicketsPage.jsx — ver todos los tickets y abrir el
+// detalle (responder / cambiar estado, ver AdminTicketDetailModal.jsx). Sin
+// scope propio: cualquier admin logueado entra, igual que
+// /admin/indice-programacion. Las respuestas que se mandan acá se ven
+// reflejadas en "Mis tickets" del widget de quien creó el ticket
+// (Frontend/src/components/TicketWidget.jsx). También existe una vista
+// tipo tablero de los mismos datos, ver AdminTicketsBoardPage.jsx.
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import {
-  clearAdminToken,
-  fetchAdminTickets,
-  fetchAdminTicketDetail,
-  addAdminTicketMessage,
-  updateTicketStatus,
-} from '../../src/api';
-import BaseModal from '../../src/components/modals/BaseModal';
-import {
-  formatTicketAttachmentMeta,
-  isImageTicketAttachment,
-  openTicketAttachment,
-  downloadTicketAttachment,
-} from '../../src/utils/ticketAttachment';
+import { clearAdminToken, fetchAdminTickets } from '../../src/api';
+import AdminTicketDetailModal, { ESTADO_LABEL, ESTADO_COLOR, APP_LABEL } from '../../src/components/AdminTicketDetailModal';
+import UserAvatar from '../../src/components/UserAvatar';
 
 const ESTADOS = [
   { key: '', label: 'Todos' },
@@ -27,34 +18,14 @@ const ESTADOS = [
   { key: 'closed', label: 'Cerrados' },
 ];
 
-const ESTADO_LABEL = { pending: 'Pendiente', in_progress: 'En curso', closed: 'Cerrado' };
-const ESTADO_COLOR = {
-  pending: 'var(--state-pending, #b45309)',
-  in_progress: 'var(--state-process, #92720c)',
-  closed: 'var(--state-done, #15803d)',
-};
-
-// Este panel es el lugar central para los tickets de TODAS las apps del
-// ecosistema (planificación, integrador, y las que se sumen después) —
-// todas escriben en las mismas tablas `tickets`/`ticket_mensajes`.
-const APP_LABEL = { planificacion: 'Planificación', integrador: 'Integrador' };
-
-// Quien responde elige a nombre de quién queda la respuesta (para que el
-// que mandó el ticket vea el nombre real, no "Soporte").
-const RESPONDIENTES = ['Esteban', 'Juan Ignacio', 'Santiago'];
-
 export default function AdminTicketsPage() {
   const nav = useNavigate();
-  const [estadoFiltro, setEstadoFiltro] = useState('');
+  // Arranca en "Pendientes": es lo que hay que atender al entrar.
+  const [estadoFiltro, setEstadoFiltro] = useState('pending');
   const [tickets, setTickets] = useState([]);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState('');
-
-  const [seleccionado, setSeleccionado] = useState(null);
-  const [respuesta, setRespuesta] = useState('');
-  const [autorNombre, setAutorNombre] = useState(RESPONDIENTES[0]);
-  const [enviandoRespuesta, setEnviandoRespuesta] = useState(false);
-  const [cambiandoEstado, setCambiandoEstado] = useState(false);
+  const [seleccionadoId, setSeleccionadoId] = useState(null);
 
   const logout = () => {
     clearAdminToken();
@@ -79,56 +50,18 @@ export default function AdminTicketsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [estadoFiltro]);
 
-  async function abrir(id) {
-    try {
-      const { data } = await fetchAdminTicketDetail(id);
-      setSeleccionado(data?.ticket || null);
-    } catch (err) {
-      console.error('Error abriendo ticket:', err);
-    }
-  }
-
-  async function enviarRespuesta(e) {
-    e.preventDefault();
-    if (!seleccionado || !respuesta.trim()) return;
-    setEnviandoRespuesta(true);
-    try {
-      await addAdminTicketMessage(seleccionado.id, { mensaje: respuesta.trim(), autorNombre: autorNombre.trim() });
-      setRespuesta('');
-      await abrir(seleccionado.id);
-      await cargar();
-    } catch (err) {
-      console.error('Error enviando respuesta:', err);
-    } finally {
-      setEnviandoRespuesta(false);
-    }
-  }
-
-  async function cambiarEstado(nuevoEstado) {
-    if (!seleccionado) return;
-    setCambiandoEstado(true);
-    try {
-      const { data } = await updateTicketStatus(seleccionado.id, nuevoEstado);
-      setSeleccionado((prev) => (prev ? { ...prev, estado: data?.ticket?.estado || nuevoEstado } : prev));
-      await cargar();
-    } catch (err) {
-      console.error('Error cambiando estado:', err);
-    } finally {
-      setCambiandoEstado(false);
-    }
-  }
-
   const pendientesCount = useMemo(
     () => tickets.filter((t) => t.estado === 'pending').length,
     [tickets]
   );
 
   return (
-    <div className="container" style={{ maxWidth: 1000 }}>
+    <div className="container" style={{ maxWidth: '100%' }}>
       <div className="header-row" style={{ alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
         <div style={{ display: 'flex', gap: 8 }}>
           <Link className="btn" to="/admin">← Admin</Link>
           <Link className="btn" to="/index">Inicio</Link>
+          <Link className="btn" to="/admin/tickets-tablero">Ver como tareas</Link>
         </div>
         <h2 style={{ margin: 0 }}>Tickets</h2>
         <button className="btn" type="button" onClick={logout}>Cerrar Sesión</button>
@@ -143,7 +76,7 @@ export default function AdminTicketsPage() {
             onClick={() => setEstadoFiltro(e.key)}
           >
             {e.label}
-            {e.key === 'pending' && pendientesCount > 0 && !estadoFiltro ? ` (${pendientesCount})` : ''}
+            {e.key === 'pending' && pendientesCount > 0 && (!estadoFiltro || estadoFiltro === 'pending') ? ` (${pendientesCount})` : ''}
           </button>
         ))}
         <button className="btn" type="button" onClick={cargar} disabled={cargando} style={{ marginLeft: 'auto' }}>
@@ -169,7 +102,7 @@ export default function AdminTicketsPage() {
             {tickets.map((t) => (
               <tr
                 key={t.id}
-                onClick={() => abrir(t.id)}
+                onClick={() => setSeleccionadoId(t.id)}
                 style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
               >
                 <td style={{ padding: 8 }}>{APP_LABEL[t.app_origen] || t.app_origen || '—'}</td>
@@ -183,6 +116,12 @@ export default function AdminTicketsPage() {
                   <span style={{ fontWeight: 700, color: ESTADO_COLOR[t.estado] || 'var(--ink)' }}>
                     {ESTADO_LABEL[t.estado] || t.estado}
                   </span>
+                  {t.en_progreso_por && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 2 }}>
+                      <UserAvatar username={t.en_progreso_por} size={14} />
+                      <span style={{ fontSize: 11, color: 'var(--ink-weak)' }}>{t.en_progreso_por}</span>
+                    </div>
+                  )}
                 </td>
               </tr>
             ))}
@@ -197,100 +136,19 @@ export default function AdminTicketsPage() {
         </table>
       </div>
 
-      <BaseModal
-        open={!!seleccionado}
-        onClose={() => setSeleccionado(null)}
-        title={seleccionado?.categoria}
-        subtitle={
-          seleccionado
-            ? `${APP_LABEL[seleccionado.app_origen] || seleccionado.app_origen || ''} · Creado por ${seleccionado.creado_por_username || '—'} · ${new Date(seleccionado.created_at).toLocaleString()}`
-            : ''
-        }
-      >
-        {seleccionado && (
-          <div>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-              {['pending', 'in_progress', 'closed'].map((e) => (
-                <button
-                  key={e}
-                  type="button"
-                  className={seleccionado.estado === e ? 'btn btn--brand' : 'btn'}
-                  disabled={cambiandoEstado}
-                  onClick={() => cambiarEstado(e)}
-                >
-                  {ESTADO_LABEL[e]}
-                </button>
-              ))}
-            </div>
-
-            <div style={{ fontSize: 14, whiteSpace: 'pre-wrap', marginBottom: 12 }}>{seleccionado.mensaje}</div>
-
-            {(seleccionado.adjuntos || []).length > 0 && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-                {seleccionado.adjuntos.map((a, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => openTicketAttachment(a)}
-                    onDoubleClick={() => downloadTicketAttachment(a)}
-                    title={`${formatTicketAttachmentMeta(a)} (clic para ver, doble clic para descargar)`}
-                    style={{
-                      border: '1px solid var(--border)', borderRadius: 8, padding: 6,
-                      background: 'transparent', cursor: 'pointer', fontSize: 12, textAlign: 'left',
-                    }}
-                  >
-                    {isImageTicketAttachment(a) ? (
-                      <img src={a.data_url} alt={a.name} style={{ width: 90, height: 90, objectFit: 'cover', borderRadius: 6, display: 'block' }} />
-                    ) : (
-                      <span>📎 {formatTicketAttachmentMeta(a)}</span>
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
-              {(seleccionado.mensajes || []).map((m) => (
-                <div key={m.id} style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 12, color: 'var(--ink-weak)' }}>
-                    {m.autor_username || (m.es_admin ? 'Soporte' : 'Usuario')} · {new Date(m.created_at).toLocaleString()}
-                  </div>
-                  <div style={{ fontSize: 14, whiteSpace: 'pre-wrap' }}>{m.mensaje}</div>
-                </div>
-              ))}
-              {(!seleccionado.mensajes || seleccionado.mensajes.length === 0) && (
-                <div style={{ fontSize: 13, color: 'var(--ink-weak)' }}>Todavía no hay respuestas.</div>
-              )}
-            </div>
-
-            <form onSubmit={enviarRespuesta} style={{ marginTop: 10 }}>
-              <label style={{ display: 'block', fontSize: 12, marginBottom: 4, color: 'var(--ink-weak)' }}>
-                Respondiendo como
-              </label>
-              <select
-                value={autorNombre}
-                onChange={(e) => setAutorNombre(e.target.value)}
-                style={{ width: '100%', padding: 8, marginBottom: 8, borderRadius: 8, border: '1px solid var(--border)' }}
-              >
-                {RESPONDIENTES.map((n) => (
-                  <option key={n} value={n}>{n}</option>
-                ))}
-              </select>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input
-                  value={respuesta}
-                  onChange={(e) => setRespuesta(e.target.value)}
-                  placeholder="Responder..."
-                  style={{ flex: 1, padding: 8, borderRadius: 8, border: '1px solid var(--border)' }}
-                />
-                <button type="submit" className="btn btn--brand" disabled={enviandoRespuesta}>
-                  {enviandoRespuesta ? 'Enviando...' : 'Enviar'}
-                </button>
-              </div>
-            </form>
-          </div>
-        )}
-      </BaseModal>
+      <AdminTicketDetailModal
+        ticketId={seleccionadoId}
+        onClose={() => setSeleccionadoId(null)}
+        onTicketChanged={(patch) => {
+          setTickets((prev) => {
+            if (estadoFiltro && patch.estado && estadoFiltro !== patch.estado) {
+              return prev.filter((t) => t.id !== patch.id);
+            }
+            return prev.map((t) => (t.id === patch.id ? { ...t, ...patch } : t));
+          });
+        }}
+        onTicketDeleted={(id) => setTickets((prev) => prev.filter((t) => t.id !== id))}
+      />
     </div>
   );
 }

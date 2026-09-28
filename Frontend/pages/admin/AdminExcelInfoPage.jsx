@@ -3,9 +3,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import usePortones from '../../src/hooks/usePortones';
 import useIpanels from '../../src/hooks/useIpanels';
 import InformeSemanalPortones from '../../src/components/InformeSemanalPortones';
+import { isoWeekLabelFromDate, weekNumberFromLabel } from '../../src/utils/isoWeek';
 
 const fmtDateTime = (dt) => (dt ? new Date(dt).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) : '');
 const dateOnly = (v) => (v ? String(v).slice(0, 10) : '');
+
+// El Presupuestador reserva un intervalo de dos semanas (production_delivery_week_start/_end)
+// y le muestra ese rango al cliente como "Fin de producción estimada". Acá tomamos solo la
+// primera semana del intervalo (_start), que es la que efectivamente se comprometió.
+const semanaPrometida = (r) => weekNumberFromLabel(isoWeekLabelFromDate(r.production_delivery_week_start));
 
 const PORTON_STAGES = [
   { key: 'diseno', label: 'Diseño Tubos' },
@@ -50,6 +56,7 @@ const PORTON_BASE_FIELDS = [
   { key: 'nv_tipo', label: 'Tipo NV', get: (r) => r.nv_tipo ?? '', hint: 'Prefijo de origen del NV en Presupuestador: vacío = Portón, PNV = Puerta, INV = iPanel, ONV = Otros, PLNV = Plegado.' },
   { key: 'nombre_cliente', label: 'Nombre Cliente', get: (r) => r.nombre_cliente ?? '', hint: 'Nombre del cliente final del pedido.' },
   { key: 'fecha_aprobacion_cliente', label: 'Fecha Aprobación Cliente', get: (r) => fmtDateTime(r.fecha_aprobacion_cliente), hint: 'Fecha en que el cliente aprobó la medición final en Presupuestador.' },
+  { key: 'semana_prometida', label: 'Semana Prometida', get: semanaPrometida, hint: 'Primera semana del intervalo de producción que el Presupuestador le mostró al cliente en su link (production_delivery_week_start).' },
   { key: 'fecha_nv', label: 'Fecha NV', get: (r) => dateOnly(r.fecha_nv), hint: 'Fecha en que se generó el NV en Presupuestador.' },
   { key: 'fecha_prod', label: 'Fecha Producción', get: (r) => dateOnly(r.fecha_prod), hint: 'Fecha planificada de inicio de producción en planta.' },
   { key: 'fecha_plan', label: 'Fecha Salida (Plan)', get: (r) => dateOnly(r.fecha_plan), hint: 'Fecha planificada de salida/despacho del portón.' },

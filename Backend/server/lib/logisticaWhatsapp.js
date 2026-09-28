@@ -36,6 +36,12 @@ function configurado() {
 }
 
 const TILE = 480;
+// Línea divisoria gris entre fotos del collage - pedido explícito del
+// usuario, para distinguir a simple vista dónde termina una foto y empieza
+// la siguiente. Se dibuja ENCIMA de la costura (no separa/achica las fotos),
+// mismo criterio que una grilla de collage típica.
+const LINEA_GROSOR = 6;
+const LINEA_COLOR = { r: 158, g: 158, b: 158 };
 
 // Placeholder de marca (SVG->PNG con sharp, sin depender de ningún archivo
 // externo) - se usa SOLO si todavía no hay ninguna foto de cuadrilla/vehículo
@@ -72,12 +78,28 @@ async function armarCollage({ fotosMiembros, fotoVehiculo }) {
 
   const [arriba, abajo] = await Promise.all([
     Promise.all(buffersMiembros.map((buf) => sharp(buf).resize(TILE, TILE, { fit: 'cover' }).toBuffer())),
-    sharp(bufferVehiculo).resize(anchoTotal, TILE, { fit: 'cover' }).toBuffer(),
+    // 'contain' en vez de 'cover' - pedido explícito del usuario: no quiere
+    // que se recorte el vehículo para llenar el ancho, prefiere verlo
+    // completo aunque quede espacio en blanco a los costados/arriba-abajo.
+    sharp(bufferVehiculo).resize(anchoTotal, TILE, { fit: 'contain', background: '#ffffff' }).toBuffer(),
+  ]);
+
+  // Líneas divisorias: verticales entre las fotos de la fila de arriba (si
+  // hay más de una), y una horizontal entre la fila de arriba y el vehículo.
+  const [lineasVerticales, lineaHorizontal] = await Promise.all([
+    Promise.all(
+      Array.from({ length: cols - 1 }, () =>
+        sharp({ create: { width: LINEA_GROSOR, height: TILE, channels: 3, background: LINEA_COLOR } }).png().toBuffer()
+      )
+    ),
+    sharp({ create: { width: anchoTotal, height: LINEA_GROSOR, channels: 3, background: LINEA_COLOR } }).png().toBuffer(),
   ]);
 
   const composites = [
     ...arriba.map((buf, i) => ({ input: buf, left: i * TILE, top: 0 })),
     { input: abajo, left: 0, top: TILE },
+    ...lineasVerticales.map((buf, i) => ({ input: buf, left: (i + 1) * TILE - LINEA_GROSOR / 2, top: 0 })),
+    { input: lineaHorizontal, left: 0, top: TILE - LINEA_GROSOR / 2 },
   ];
 
   return sharp({ create: { width: anchoTotal, height: TILE * 2, channels: 3, background: '#ffffff' } })

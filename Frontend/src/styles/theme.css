@@ -385,6 +385,17 @@ body {
 .pp-table tbody tr:hover{
   background: color-mix(in srgb, var(--brand) 10%, #fff);
 }
+/* Color pastel por semana de despacho (PreproduccionValoresTable.jsx) - el
+   rayado cebra de arriba y, sobre todo, force-light.css (mismo selector con
+   !important, para forzar tema claro en celulares en modo oscuro) pisaban
+   el background inline que pusimos en la fila con !important - un inline
+   style nunca le gana a un !important, así que la única forma de que la
+   fila se pinte SIEMPRE (fila par o impar) es esta clase, con más
+   especificidad que la de force-light.css (misma cantidad de selectores +
+   la clase repetida) para ganarle pase lo que pase el orden de imports. */
+.pp-table tbody tr.pp-row-semana.pp-row-semana{
+  background: var(--row-semana-bg) !important;
+}
 
 .pp-input,
 .pp-select{
@@ -1487,4 +1498,26 @@ html, body{
 }
 .route-fullbleed .pp-tableWrap::-webkit-scrollbar{
   height: 0;                         /* Chrome/Safari/Edge */
+}
+
+/* =========================================================
+   Tickets — excepciones puntuales (NO tocar .pp-modal ni
+   .container acá: esas clases las comparten LogisticaAuthModal/
+   AdminAuthModal/ComercialAuthModal, usados desde /a y /i, rutas
+   que se manejan desde tablets — agrandarlas de forma global
+   rompería esos modales chicos pensados para tocar con el dedo.
+   Por eso el detalle de un ticket usa esta clase aparte, sumada a
+   .pp-modal en vez de reemplazarla.)
+   ========================================================= */
+.pp-modal--wide {
+  width: min(1100px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  /* Hay DOS bloques ".pp-modal{}" en este archivo (uno más abajo, ya
+     existía antes de esta sesión) y el segundo pisa "overflow: auto" del
+     primero con "overflow: hidden" - sin este refuerzo, un ticket con hilo
+     largo + adjuntos recorta el final del modal SIN scrollbar (overflow
+     hidden, no auto), dejando "Borrar ticket" y hasta el form de responder
+     inalcanzables. Alcanza con reforzarlo acá (no tocar el .pp-modal base:
+     lo comparten los auth modals de tablet, que nunca llegan a desbordar).*/
+  overflow-y: auto;
 }

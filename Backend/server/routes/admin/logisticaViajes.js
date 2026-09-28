@@ -27,6 +27,7 @@ const gastosDb = require('../../lib/logisticaGastosDb');
 const adjuntosStorage = require('../../lib/logisticaAdjuntosStorage');
 const whatsapp = require('../../lib/logisticaWhatsapp');
 const despachoV2Db = require('../../lib/despachoV2Db');
+const checklistDb = require('../../lib/logisticaChecklistDb');
 
 // Zonas del corredor + ruta real por calle comparten el mismo trigger
 // (cualquier cambio de paradas/orden de un viaje) - se disparan juntas.
@@ -185,6 +186,18 @@ router.delete('/logistica/cuadrillas/:id', requireFullAccess, asyncRoute(async (
 }));
 router.put('/logistica/cuadrillas/:id/miembros', requireFullAccess, asyncRoute(async (req, res) => {
   res.json({ ok: true, cuadrilla: await db.setCuadrillaMiembros(req.params.id, req.body?.qc_user_ids) });
+}));
+
+// ===== CheckList de arranque de viaje (panel de configuración) =====
+router.post('/logistica/checklist-items', requireFullAccess, asyncRoute(async (req, res) => {
+  res.json({ ok: true, item: await checklistDb.crearChecklistItem(req.body || {}) });
+}));
+router.patch('/logistica/checklist-items/:id', requireFullAccess, asyncRoute(async (req, res) => {
+  res.json({ ok: true, item: await checklistDb.actualizarChecklistItem(req.params.id, req.body || {}) });
+}));
+router.delete('/logistica/checklist-items/:id', requireFullAccess, asyncRoute(async (req, res) => {
+  await checklistDb.borrarChecklistItem(req.params.id);
+  res.json({ ok: true });
 }));
 
 router.post('/logistica/reglas-capacidad', requireFullAccess, asyncRoute(async (req, res) => {

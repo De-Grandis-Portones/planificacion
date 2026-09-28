@@ -1,12 +1,83 @@
 import { useEffect, useRef, useState } from 'react';
-import { createTicket, fetchMyTickets, fetchMyTicketDetail, addMyTicketMessage } from '../api';
+import { createTicket, fetchMyTickets, fetchMyTicketDetail, addMyTicketMessage, cancelMyTicket, getAdminToken } from '../api';
 import {
   fileToTicketAttachment,
   formatTicketAttachmentMeta,
   isImageTicketAttachment,
   openTicketAttachment,
   downloadTicketAttachment,
+  ticketAttachmentsTotalBytes,
+  formatTicketAttachmentsMb,
+  MAX_TICKET_ATTACHMENTS_TOTAL_BYTES,
 } from '../utils/ticketAttachment';
+
+// Badge del botón "Tickets": NO es un contador de "cuántos tickets tenés"
+// (eso confunde con la cantidad de solicitudes) — solo debe prenderse cuando
+// pasó algo que amerita mirar: el ticket se cerró, o llegó un comentario
+// nuevo. No hay tabla de "visto" en el backend, así que se trackea acá con
+// localStorage (por navegador, no sincroniza entre dispositivos — trade-off
+// aceptable para no tocar schema/endpoints por esto), guardando por ticket
+// el último {updated_at, estado} que el usuario vio. Comparando contra el
+// estado actual:
+//   - pasó a "closed" y antes no lo estaba -> notifica.
+//   - el estado NO cambió pero updated_at sí -> es un mensaje nuevo -> notifica.
+//   - el estado cambió a otra cosa (ej. pending -> in_progress) -> NO notifica.
+// Un ticket nunca antes trackeado (el backlog completo la primera vez que
+// esto corre en un navegador, o cualquier ticket nuevo) se toma como línea
+// de base -- se guarda tal cual está, sin disparar notificación por
+// historial viejo. Se marca "visto" al abrirlo y también al crearlo o
+// responderlo (así la propia acción del usuario no se cuenta a sí misma).
+const TICKETS_SEEN_STORAGE_KEY = 'dg_tickets_seen_v2';
+
+function readSeenMap() {
+  try {
+    return JSON.parse(localStorage.getItem(TICKETS_SEEN_STORAGE_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function writeSeenMap(map) {
+  try {
+    localStorage.setItem(TICKETS_SEEN_STORAGE_KEY, JSON.stringify(map));
+  } catch {
+    // localStorage puede fallar (modo privado, storage lleno): no es crítico, el badge simplemente no persiste.
+  }
+}
+
+function markTicketSeen(id, ticket) {
+  if (!ticket) return;
+  const map = readSeenMap();
+  map[id] = { updated_at: ticket.updated_at, estado: ticket.estado };
+  writeSeenMap(map);
+}
+
+function isTicketNotifyWorthy(prev, ticket) {
+  if (!prev) return false;
+  const becameClosed = ticket.estado === 'closed' && prev.estado !== 'closed';
+  const gotNewMessage = prev.estado === ticket.estado && prev.updated_at !== ticket.updated_at;
+  return becameClosed || gotNewMessage;
+}
+
+// Devuelve los ids de los tickets con novedad (cerrado o comentario nuevo) y
+// de paso re-sella como "vistos" los que no tienen novedad (o nunca se
+// trackearon); los que sí generaron notificación quedan sin resellar hasta
+// que el usuario los abra.
+function syncTicketNotifications(tickets) {
+  const map = readSeenMap();
+  const nextMap = { ...map };
+  const notifiedIds = [];
+  for (const t of tickets || []) {
+    const prev = map[t.id];
+    if (isTicketNotifyWorthy(prev, t)) {
+      notifiedIds.push(t.id);
+    } else {
+      nextMap[t.id] = { updated_at: t.updated_at, estado: t.estado };
+    }
+  }
+  writeSeenMap(nextMap);
+  return notifiedIds;
+}
 
 // Botón "Tickets" (junto a "Menú" en NonProductionLayout, y junto a
 // "Refrescar" en los tableros de producción — ver App.jsx) que abre un panel
@@ -45,6 +116,10 @@ export default function TicketWidget() {
   const [cargandoMias, setCargandoMias] = useState(false);
   const [ticketSeleccionado, setTicketSeleccionado] = useState(null);
   const [respuesta, setRespuesta] = useState('');
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifiedTicketIds, setNotifiedTicketIds] = useState(() => new Set());
+  const [confirmandoAnular, setConfirmandoAnular] = useState(false);
+  const [anulando, setAnulando] = useState(false);
 
   useEffect(() => {
     function onDocClick(e) {
@@ -59,30 +134,58 @@ export default function TicketWidget() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, tab]);
 
-  async function cargarMisTickets() {
-    setCargandoMias(true);
+  // Poll para el badge de "no leídos" en el botón — corre siempre, no solo
+  // con el panel abierto, para que se note un ticket respondido aunque no
+  // hayas vuelto a entrar a "Mis tickets".
+  useEffect(() => {
+    cargarMisTickets({ silent: true });
+    const interval = setInterval(() => cargarMisTickets({ silent: true }), 60000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function cargarMisTickets(opts = {}) {
+    // Este widget solo tiene sentido logueado como admin — sin token no hay
+    // "mis tickets" que traer. Evita pedirle al backend algo que va a dar
+    // 401 sí o sí: en una pantalla pública (tablero de producción, sin
+    // login) eso disparaba el aviso global de "sesión expirada" y mandaba a
+    // operarios que nunca se loguearon a la pantalla de login.
+    if (!getAdminToken()) return;
+    const silent = !!opts.silent;
+    if (!silent) setCargandoMias(true);
     try {
       const { data } = await fetchMyTickets();
-      setMisTickets(data?.tickets || []);
+      const tickets = data?.tickets || [];
+      setMisTickets(tickets);
+      const notified = syncTicketNotifications(tickets);
+      setNotifiedTicketIds(new Set(notified));
+      setUnreadCount(notified.length);
     } catch (err) {
       console.error('Error cargando mis tickets:', err);
     } finally {
-      setCargandoMias(false);
+      if (!silent) setCargandoMias(false);
     }
   }
 
   async function abrirTicket(id) {
+    setConfirmandoAnular(false);
     try {
       const { data } = await fetchMyTicketDetail(id);
-      setTicketSeleccionado(data?.ticket || null);
+      const ticket = data?.ticket || null;
+      setTicketSeleccionado(ticket);
+      if (ticket) {
+        markTicketSeen(ticket.id, ticket);
+        const notified = syncTicketNotifications(misTickets);
+        setNotifiedTicketIds(new Set(notified));
+        setUnreadCount(notified.length);
+      }
     } catch (err) {
       console.error('Error abriendo ticket:', err);
     }
   }
 
-  async function onSeleccionarArchivos(e) {
-    const files = Array.from(e.target.files || []);
-    e.target.value = '';
+  async function agregarArchivos(fileList) {
+    const files = Array.from(fileList || []);
     if (!files.length) return;
     setErrorNueva('');
     setSubiendoAdjunto(true);
@@ -91,12 +194,35 @@ export default function TicketWidget() {
       for (const file of files) {
         nuevos.push(await fileToTicketAttachment(file));
       }
-      setAdjuntos((prev) => [...prev, ...nuevos].slice(0, 5));
+      const combinados = [...adjuntos, ...nuevos].slice(0, 5);
+      const totalBytes = ticketAttachmentsTotalBytes(combinados);
+      if (totalBytes > MAX_TICKET_ATTACHMENTS_TOTAL_BYTES) {
+        throw new Error(
+          `Entre todos los adjuntos no pueden superar ${formatTicketAttachmentsMb(MAX_TICKET_ATTACHMENTS_TOTAL_BYTES)} ` +
+          `(llevás ${formatTicketAttachmentsMb(totalBytes)}). Sacá alguno o elegí uno más liviano.`
+        );
+      }
+      setAdjuntos(combinados);
     } catch (err) {
       setErrorNueva(err.message || 'No se pudo adjuntar el archivo.');
     } finally {
       setSubiendoAdjunto(false);
     }
+  }
+
+  async function onSeleccionarArchivos(e) {
+    // Ojo: hay que copiar el FileList a un array ANTES de limpiar
+    // e.target.value - si no, vaciar el input también vacía esta misma
+    // referencia (es "viva"), y agregarArchivos recibe una lista vacía.
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    await agregarArchivos(files);
+  }
+
+  function onDropArchivos(e) {
+    e.preventDefault();
+    if (subiendoAdjunto || adjuntos.length >= 5) return;
+    agregarArchivos(e.dataTransfer.files);
   }
 
   function quitarAdjunto(idx) {
@@ -112,18 +238,24 @@ export default function TicketWidget() {
     setErrorNueva('');
     setEnviando(true);
     try {
-      await createTicket({
+      const { data } = await createTicket({
         categoria,
         mensaje: mensaje.trim(),
         rutaOrigen: window.location.pathname,
         adjuntos,
       });
+      if (data?.ticket) markTicketSeen(data.ticket.id, data.ticket);
       setMensaje('');
       setAdjuntos([]);
       setEnviado(true);
       setTimeout(() => setEnviado(false), 4000);
+      cargarMisTickets({ silent: true });
     } catch (err) {
-      setErrorNueva(err?.response?.data?.error || 'No se pudo enviar el ticket. Probá de nuevo.');
+      if (err?.response?.status === 413) {
+        setErrorNueva('Los adjuntos son demasiado pesados para enviarse juntos. Sacá alguno o achicalo e intentá de nuevo.');
+      } else {
+        setErrorNueva(err?.response?.data?.error || 'No se pudo enviar el ticket. Probá de nuevo.');
+      }
     } finally {
       setEnviando(false);
     }
@@ -141,6 +273,22 @@ export default function TicketWidget() {
     }
   }
 
+  async function anularTicket() {
+    if (!ticketSeleccionado) return;
+    setAnulando(true);
+    try {
+      await cancelMyTicket(ticketSeleccionado.id);
+      // Se borró de verdad - no queda nada que mostrar, volvemos al listado.
+      setTicketSeleccionado(null);
+      await cargarMisTickets();
+    } catch (err) {
+      console.error('Error anulando ticket:', err);
+    } finally {
+      setAnulando(false);
+      setConfirmandoAnular(false);
+    }
+  }
+
   return (
     <div style={{ position: 'relative', display: 'inline-block' }}>
       <button
@@ -148,10 +296,23 @@ export default function TicketWidget() {
         className="btn"
         onClick={() => setOpen((v) => !v)}
         title="Tickets"
-        style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px' }}
+        style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px' }}
       >
         <img src="/ticket-logo.png" alt="" style={{ width: 18, height: 18, objectFit: 'contain' }} />
         Tickets
+        {unreadCount > 0 && (
+          <span
+            title={`${unreadCount} ticket${unreadCount === 1 ? '' : 's'} con novedades`}
+            style={{
+              position: 'absolute', top: -6, right: -6,
+              minWidth: 16, height: 16, padding: '0 4px', borderRadius: 999,
+              background: '#dc2626', color: '#fff', fontSize: 10, fontWeight: 700,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1,
+            }}
+          >
+            {unreadCount > 9 ? '9+' : unreadCount}
+          </span>
+        )}
       </button>
 
       {open && (
@@ -207,76 +368,134 @@ export default function TicketWidget() {
 
           <div style={{ padding: 14, maxHeight: 420, overflowY: 'auto' }}>
             {tab === 'nueva' && (
-              <form onSubmit={enviarNuevoTicket}>
-                <label style={{ display: 'block', fontSize: 12, marginBottom: 4, color: 'var(--ink-weak)' }}>
-                  Categoría
-                </label>
-                <select
-                  value={categoria}
-                  onChange={(e) => setCategoria(e.target.value)}
-                  style={{ width: '100%', padding: 8, marginBottom: 10, borderRadius: 8, border: '1px solid var(--border)' }}
-                >
-                  {TICKET_CATEGORIAS.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-
-                <label style={{ display: 'block', fontSize: 12, marginBottom: 4, color: 'var(--ink-weak)' }}>
-                  Contanos tu ticket
-                </label>
-                <textarea
-                  value={mensaje}
-                  onChange={(e) => setMensaje(e.target.value)}
-                  rows={5}
-                  placeholder="Escribí acá el detalle..."
-                  style={{ width: '100%', padding: 8, borderRadius: 8, border: '1px solid var(--border)', resize: 'vertical' }}
-                />
-
-                <label style={{ display: 'block', fontSize: 12, margin: '10px 0 4px', color: 'var(--ink-weak)' }}>
-                  Adjuntar foto, video o PDF (opcional)
-                </label>
-                <input
-                  type="file"
-                  accept="image/*,video/mp4,video/quicktime,video/webm,application/pdf"
-                  multiple
-                  onChange={onSeleccionarArchivos}
-                  disabled={subiendoAdjunto || adjuntos.length >= 5}
-                  style={{ fontSize: 12 }}
-                />
-                {subiendoAdjunto && <div style={{ fontSize: 12, color: 'var(--ink-weak)', marginTop: 4 }}>Procesando...</div>}
-
-                {adjuntos.length > 0 && (
-                  <div style={{ marginTop: 8 }}>
-                    {adjuntos.map((a, idx) => (
-                      <div
-                        key={idx}
-                        style={{
-                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                          fontSize: 12, padding: '4px 8px', marginBottom: 4,
-                          borderRadius: 6, border: '1px solid var(--border)',
-                        }}
-                      >
-                        <span>{formatTicketAttachmentMeta(a)}</span>
-                        <button
-                          type="button"
-                          onClick={() => quitarAdjunto(idx)}
-                          style={{ background: 'none', border: 'none', color: '#b3261e', cursor: 'pointer', padding: 0 }}
-                        >
-                          Quitar
-                        </button>
-                      </div>
+              <form onSubmit={enviarNuevoTicket} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: 'var(--ink-weak)' }}>
+                    Categoría
+                  </label>
+                  <select
+                    value={categoria}
+                    onChange={(e) => setCategoria(e.target.value)}
+                    style={{
+                      width: '100%', padding: '9px 10px', borderRadius: 10,
+                      border: '1px solid var(--border)', background: 'var(--surface)',
+                      color: 'var(--ink)', fontSize: 13,
+                    }}
+                  >
+                    {TICKET_CATEGORIAS.map((c) => (
+                      <option key={c} value={c}>{c}</option>
                     ))}
-                  </div>
-                )}
+                  </select>
+                </div>
 
-                {errorNueva && <div style={{ color: '#b3261e', fontSize: 12, marginTop: 6 }}>{errorNueva}</div>}
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: 'var(--ink-weak)' }}>
+                    Contanos tu ticket
+                  </label>
+                  <textarea
+                    value={mensaje}
+                    onChange={(e) => setMensaje(e.target.value)}
+                    rows={5}
+                    placeholder="Escribí acá el detalle..."
+                    style={{
+                      width: '100%', padding: 10, borderRadius: 10,
+                      border: '1px solid var(--border)', background: 'var(--surface)',
+                      color: 'var(--ink)', fontSize: 13, resize: 'vertical', lineHeight: 1.4,
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: 'var(--ink-weak)' }}>
+                    Adjuntos (opcional)
+                  </label>
+                  <label
+                    htmlFor="ticket-adjuntos-input"
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={onDropArchivos}
+                    style={{
+                      position: 'relative',
+                      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+                      padding: '14px 10px', borderRadius: 10, textAlign: 'center',
+                      border: '1.5px dashed var(--border)', background: 'var(--brand-100)',
+                      opacity: (subiendoAdjunto || adjuntos.length >= 5) ? 0.6 : 1,
+                      cursor: (subiendoAdjunto || adjuntos.length >= 5) ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    <span style={{ fontSize: 20, lineHeight: 1 }}>📎</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--brand-700)' }}>
+                      {subiendoAdjunto ? 'Procesando...' : 'Foto, video o PDF'}
+                    </span>
+                    <span style={{ fontSize: 11, color: 'var(--ink-weak)' }}>
+                      Elegí un archivo o arrastralo acá · máx. 5
+                    </span>
+                    <input
+                      id="ticket-adjuntos-input"
+                      type="file"
+                      accept="image/*,video/mp4,video/quicktime,video/webm,application/pdf"
+                      multiple
+                      onChange={onSeleccionarArchivos}
+                      disabled={subiendoAdjunto || adjuntos.length >= 5}
+                      style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
+                    />
+                  </label>
+
+                  {adjuntos.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                      {adjuntos.map((a, idx) => (
+                        <div
+                          key={idx}
+                          title={formatTicketAttachmentMeta(a)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 6, maxWidth: '100%',
+                            padding: '4px 6px 4px 4px', borderRadius: 999,
+                            border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 12,
+                          }}
+                        >
+                          {isImageTicketAttachment(a) ? (
+                            <img
+                              src={a.data_url}
+                              alt={a.name}
+                              style={{ width: 22, height: 22, objectFit: 'cover', borderRadius: '50%', flexShrink: 0 }}
+                            />
+                          ) : (
+                            <span style={{ fontSize: 14, flexShrink: 0 }}>📄</span>
+                          )}
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>
+                            {a.name}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => quitarAdjunto(idx)}
+                            aria-label={`Quitar ${a.name}`}
+                            style={{
+                              display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                              width: 18, height: 18, borderRadius: '50%', border: 'none', padding: 0,
+                              background: 'color-mix(in srgb, #b3261e 12%, transparent)', color: '#b3261e',
+                              cursor: 'pointer', fontSize: 12, lineHeight: 1,
+                            }}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {errorNueva && <div style={{ color: '#b3261e', fontSize: 12 }}>{errorNueva}</div>}
                 {enviado && (
-                  <div style={{ color: 'var(--brand-700)', fontSize: 12, marginTop: 6 }}>
+                  <div style={{ color: 'var(--brand-700)', fontSize: 12, fontWeight: 600 }}>
                     ¡Listo! Tu ticket fue enviado.
                   </div>
                 )}
 
-                <button type="submit" className="btn btn--brand" disabled={enviando} style={{ width: '100%', marginTop: 10 }}>
+                <button
+                  type="submit"
+                  className="btn btn--brand"
+                  disabled={enviando || !mensaje.trim()}
+                  style={{ width: '100%', padding: '10px 12px', fontSize: 13, borderRadius: 10 }}
+                >
                   {enviando ? 'Enviando...' : 'Enviar ticket'}
                 </button>
               </form>
@@ -294,6 +513,7 @@ export default function TicketWidget() {
                     type="button"
                     onClick={() => abrirTicket(t.id)}
                     style={{
+                      position: 'relative',
                       display: 'block',
                       width: '100%',
                       textAlign: 'left',
@@ -305,6 +525,15 @@ export default function TicketWidget() {
                       cursor: 'pointer',
                     }}
                   >
+                    {notifiedTicketIds.has(t.id) && (
+                      <span
+                        title="Tiene novedades (respuesta o cierre)"
+                        style={{
+                          position: 'absolute', top: 6, right: 6,
+                          width: 9, height: 9, borderRadius: '50%', background: '#dc2626',
+                        }}
+                      />
+                    )}
                     <div style={{ fontSize: 13, fontWeight: 600 }}>{t.categoria}</div>
                     <div style={{ fontSize: 12, color: 'var(--ink-weak)', margin: '2px 0' }}>
                       {new Date(t.created_at).toLocaleString()}
@@ -367,16 +596,57 @@ export default function TicketWidget() {
                   ))}
                 </div>
 
-                {ticketSeleccionado.estado !== 'closed' && (
-                  <form onSubmit={enviarRespuesta} style={{ marginTop: 8, display: 'flex', gap: 6 }}>
-                    <input
-                      value={respuesta}
-                      onChange={(e) => setRespuesta(e.target.value)}
-                      placeholder="Agregar un comentario..."
-                      style={{ flex: 1, padding: 8, borderRadius: 8, border: '1px solid var(--border)' }}
-                    />
-                    <button type="submit" className="btn btn--brand">Enviar</button>
-                  </form>
+                {['pending', 'in_progress'].includes(ticketSeleccionado.estado) && (
+                  <>
+                    <form onSubmit={enviarRespuesta} style={{ marginTop: 8, display: 'flex', gap: 6 }}>
+                      <input
+                        value={respuesta}
+                        onChange={(e) => setRespuesta(e.target.value)}
+                        placeholder="Agregar un comentario..."
+                        style={{ flex: 1, padding: 8, borderRadius: 8, border: '1px solid var(--border)' }}
+                      />
+                      <button type="submit" className="btn btn--brand">Enviar</button>
+                    </form>
+
+                    {!confirmandoAnular ? (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmandoAnular(true)}
+                        style={{
+                          marginTop: 8, background: 'none', border: 'none', padding: 0,
+                          color: '#b3261e', fontSize: 12, cursor: 'pointer', textDecoration: 'underline',
+                        }}
+                      >
+                        Anular ticket
+                      </button>
+                    ) : (
+                      <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 12, color: 'var(--ink-weak)' }}>¿Seguro que querés anularlo?</span>
+                        <button
+                          type="button"
+                          onClick={anularTicket}
+                          disabled={anulando}
+                          style={{
+                            padding: '4px 10px', fontSize: 12, borderRadius: 8, border: 'none',
+                            background: '#b3261e', color: '#fff', fontWeight: 700, cursor: 'pointer',
+                          }}
+                        >
+                          {anulando ? 'Anulando...' : 'Sí, anular'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmandoAnular(false)}
+                          disabled={anulando}
+                          style={{
+                            padding: '4px 10px', fontSize: 12, borderRadius: 8,
+                            border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer',
+                          }}
+                        >
+                          No
+                        </button>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}

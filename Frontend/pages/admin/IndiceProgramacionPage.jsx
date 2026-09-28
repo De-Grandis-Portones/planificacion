@@ -371,6 +371,11 @@ export default function IndiceProgramacionPage() {
   // Link + usuario/contraseña editables: se guardan juntos por nodo en
   // public.notas_nodo, así que lo que carga uno lo ve el resto del equipo.
   const [link, setLink] = useState('');
+  // Variables de entorno e info de programación: igual que link, un solo
+  // texto compartido por nodo (public.notas_nodo.env_vars / .info_programacion),
+  // se guarda solo al salir del campo.
+  const [envVars, setEnvVars] = useState('');
+  const [infoProgramacion, setInfoProgramacion] = useState('');
   // "¿Qué se está trabajando acá?" - a diferencia de link/acceso, es UNA FILA
   // POR ADMIN (public.notas_nodo_entradas): notaEntradas trae la de todos,
   // misNotaTexto es mi borrador local. Así nadie pisa lo de otro.
@@ -543,6 +548,8 @@ export default function IndiceProgramacionPage() {
   useEffect(() => {
     if (!openNode) return;
     setLink('');
+    setEnvVars('');
+    setInfoProgramacion('');
     setAdminUserInput('');
     setAdminPasswordInput('');
     setSavedAdminUser('');
@@ -556,6 +563,8 @@ export default function IndiceProgramacionPage() {
         const u = data?.admin_user || '';
         const p = data?.admin_password || '';
         setLink(data?.link || '');
+        setEnvVars(data?.env_vars || '');
+        setInfoProgramacion(data?.info_programacion || '');
         setAdminUserInput(u);
         setAdminPasswordInput(p);
         setSavedAdminUser(u);
@@ -624,6 +633,11 @@ export default function IndiceProgramacionPage() {
   // El link se guarda solo al salir del campo (no manda usuario ni
   // contraseña, así nunca los toca sin querer).
   const saveLink = () => saveField({ link });
+
+  // Mismo criterio que el link: se guardan solo al salir del campo, cada uno
+  // independiente del resto (ver comentario en notasNodoDb.setNota).
+  const saveEnvVars = () => saveField({ env_vars: envVars });
+  const saveInfoProgramacion = () => saveField({ info_programacion: infoProgramacion });
 
   // Guarda MI entrada (nunca la de otro - el autor lo pone el backend según
   // quién está logueado). Actualiza la lista completa con lo que devuelve el
@@ -764,6 +778,16 @@ export default function IndiceProgramacionPage() {
         .ip-access-input:focus { outline: none; border-bottom-style: solid; }
         .ip-access-input::placeholder { color: var(--muted); }
         .ip-access-value { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; color: var(--text); }
+
+        .ip-note-textarea {
+          width: 100%; box-sizing: border-box;
+          border: 1px solid var(--border); border-radius: 8px;
+          padding: 8px 10px; font: inherit; font-size: 12.5px;
+          color: var(--text); background: var(--surface);
+          resize: vertical; min-height: 70px;
+        }
+        .ip-note-textarea:focus { outline: none; border-color: var(--brand); }
+        .ip-note-textarea--mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre; }
 
         .ip-modal-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
         .ip-modal-list li { position: relative; padding-left: 18px; color: var(--text); line-height: 1.5; font-size: 13.5px; }
@@ -1149,6 +1173,36 @@ export default function IndiceProgramacionPage() {
                 {accessError && (
                   <div style={{ fontSize: 11.5, color: '#c0392b', marginTop: 8 }}>{accessError}</div>
                 )}
+              </div>
+            )}
+
+            {openContent && (
+              <div className="ip-access-box">
+                <div className="ip-section-label" style={{ marginBottom: 8 }}>🧩 Variables de entorno</div>
+                <textarea
+                  className="ip-note-textarea ip-note-textarea--mono"
+                  value={envVars}
+                  onChange={(e) => setEnvVars(e.target.value)}
+                  onBlur={saveEnvVars}
+                  disabled={notaLoading}
+                  placeholder={'CLAVE=valor\nOTRA_CLAVE=valor'}
+                  rows={5}
+                />
+              </div>
+            )}
+
+            {openContent && (
+              <div className="ip-access-box">
+                <div className="ip-section-label" style={{ marginBottom: 8 }}>📝 Información para programación</div>
+                <textarea
+                  className="ip-note-textarea"
+                  value={infoProgramacion}
+                  onChange={(e) => setInfoProgramacion(e.target.value)}
+                  onBlur={saveInfoProgramacion}
+                  disabled={notaLoading}
+                  placeholder="Detalles técnicos, decisiones, cosas a tener en cuenta para tocar este código..."
+                  rows={4}
+                />
               </div>
             )}
 

@@ -42,6 +42,7 @@ import LogisticaPromesaConfigModal from './modals/LogisticaPromesaConfigModal';
 import LogisticaMensajeViajeModal from './modals/LogisticaMensajeViajeModal';
 import LogisticaVehiculosModal from './modals/LogisticaVehiculosModal';
 import LogisticaCuadrillasModal from './modals/LogisticaCuadrillasModal';
+import LogisticaChecklistModal from './modals/LogisticaChecklistModal';
 import LogisticaParadasExtraModal from './modals/LogisticaParadasExtraModal';
 import LogisticaWhatsappTemplatesModal from './modals/LogisticaWhatsappTemplatesModal';
 import LogisticaAdjuntosModal from './modals/LogisticaAdjuntosModal';
@@ -271,6 +272,7 @@ export default function LogisticaFechasMapaView({ canEdit, onCreated }) {
   const [showIaConfig, setShowIaConfig] = useState(false);
   const [showVehiculos, setShowVehiculos] = useState(false);
   const [showCuadrillas, setShowCuadrillas] = useState(false);
+  const [showChecklist, setShowChecklist] = useState(false);
   const [showParadasExtra, setShowParadasExtra] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const [mensajeViaje, setMensajeViaje] = useState(null); // { viajeId, titulo } | null
@@ -1398,6 +1400,7 @@ export default function LogisticaFechasMapaView({ canEdit, onCreated }) {
               <button type="button" className="btn" onClick={() => setShowIaConfig(true)}>🤖 Config IA</button>
               <button type="button" className="btn" onClick={() => setShowPromesaConfig(true)}>📅 Config promesa</button>
               <button type="button" className="btn" onClick={() => setShowCuadrillas(true)}>👷 Cuadrillas</button>
+              <button type="button" className="btn" onClick={() => setShowChecklist(true)}>✅ CheckList</button>
               <button type="button" className="btn" onClick={() => setShowVehiculos(true)}>🚚 Vehículos</button>
               <button type="button" className="btn" onClick={() => setShowParadasExtra(true)}>🏨 Paradas estándar</button>
               <button type="button" className="btn" onClick={() => setShowTemplates(true)}>📄 Templates WhatsApp</button>
@@ -1449,6 +1452,7 @@ export default function LogisticaFechasMapaView({ canEdit, onCreated }) {
               <button type="button" className="btn" onClick={() => setShowIaConfig(true)}>🤖 Config IA</button>
               <button type="button" className="btn" onClick={() => setShowPromesaConfig(true)}>📅 Config promesa</button>
               <button type="button" className="btn" onClick={() => setShowCuadrillas(true)}>👷 Cuadrillas</button>
+              <button type="button" className="btn" onClick={() => setShowChecklist(true)}>✅ CheckList</button>
               <button type="button" className="btn" onClick={() => setShowVehiculos(true)}>🚚 Vehículos</button>
               <button type="button" className="btn" onClick={() => setShowParadasExtra(true)}>🏨 Paradas estándar</button>
               <button type="button" className="btn" onClick={() => setShowTemplates(true)}>📄 Templates WhatsApp</button>
@@ -1662,6 +1666,7 @@ export default function LogisticaFechasMapaView({ canEdit, onCreated }) {
       <LogisticaPromesaConfigModal open={showPromesaConfig} onClose={() => setShowPromesaConfig(false)} onChanged={load} />
       <LogisticaVehiculosModal open={showVehiculos} config={config} onClose={() => setShowVehiculos(false)} onChanged={reloadConfig} />
       <LogisticaCuadrillasModal open={showCuadrillas} config={config} onClose={() => setShowCuadrillas(false)} onChanged={reloadConfig} />
+      <LogisticaChecklistModal open={showChecklist} config={config} onClose={() => setShowChecklist(false)} onChanged={reloadConfig} />
       <LogisticaParadasExtraModal open={showParadasExtra} puntosExtra={puntosExtra} onClose={() => setShowParadasExtra(false)} onChanged={load} />
       <LogisticaWhatsappTemplatesModal open={showTemplates} onClose={() => setShowTemplates(false)} />
       <LogisticaMensajeViajeModal open={!!mensajeViaje} viajeId={mensajeViaje?.viajeId} titulo={mensajeViaje?.titulo} onClose={() => setMensajeViaje(null)} />

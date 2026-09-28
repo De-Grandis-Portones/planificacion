@@ -164,6 +164,7 @@ export default function AdminTicketDetailModal({ ticketId, onClose, onTicketChan
     <BaseModal
       open={!!ticketId}
       onClose={onClose}
+      wide
       title={ticket?.categoria}
       subtitle={
         ticket
@@ -259,49 +260,46 @@ export default function AdminTicketDetailModal({ ticketId, onClose, onTicketChan
             </div>
           </form>
 
-          {/* Un ticket real solo se puede borrar cerrado (historial de soporte
-              ya resuelto); una tarjeta "tarea" (app_origen='tarea') se puede
-              borrar en cualquier estado - no es un registro que haya que
-              conservar. Ver deleteTicketAdmin en el backend. */}
-          {(ticket.estado === 'closed' || ticket.app_origen === 'tarea') && (
-            !confirmandoBorrar ? (
+          {/* Se puede borrar sea cual sea el estado - el backend
+              (deleteTicketAdmin en ticketsDb.js) no restringe por estado, a
+              pedido explícito del usuario. */}
+          {!confirmandoBorrar ? (
+            <button
+              type="button"
+              onClick={() => setConfirmandoBorrar(true)}
+              style={{
+                marginTop: 12, background: 'none', border: 'none', padding: 0,
+                color: '#b3261e', fontSize: 12, cursor: 'pointer', textDecoration: 'underline',
+              }}
+            >
+              Borrar ticket
+            </button>
+          ) : (
+            <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 12, color: 'var(--ink-weak)' }}>¿Seguro que querés borrarlo? No se puede deshacer.</span>
               <button
                 type="button"
-                onClick={() => setConfirmandoBorrar(true)}
+                onClick={borrarTicket}
+                disabled={borrando}
                 style={{
-                  marginTop: 12, background: 'none', border: 'none', padding: 0,
-                  color: '#b3261e', fontSize: 12, cursor: 'pointer', textDecoration: 'underline',
+                  padding: '4px 10px', fontSize: 12, borderRadius: 8, border: 'none',
+                  background: '#b3261e', color: '#fff', fontWeight: 700, cursor: 'pointer',
                 }}
               >
-                Borrar ticket
+                {borrando ? 'Borrando...' : 'Sí, borrar'}
               </button>
-            ) : (
-              <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 12, color: 'var(--ink-weak)' }}>¿Seguro que querés borrarlo? No se puede deshacer.</span>
-                <button
-                  type="button"
-                  onClick={borrarTicket}
-                  disabled={borrando}
-                  style={{
-                    padding: '4px 10px', fontSize: 12, borderRadius: 8, border: 'none',
-                    background: '#b3261e', color: '#fff', fontWeight: 700, cursor: 'pointer',
-                  }}
-                >
-                  {borrando ? 'Borrando...' : 'Sí, borrar'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfirmandoBorrar(false)}
-                  disabled={borrando}
-                  style={{
-                    padding: '4px 10px', fontSize: 12, borderRadius: 8,
-                    border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer',
-                  }}
-                >
-                  No
-                </button>
-              </div>
-            )
+              <button
+                type="button"
+                onClick={() => setConfirmandoBorrar(false)}
+                disabled={borrando}
+                style={{
+                  padding: '4px 10px', fontSize: 12, borderRadius: 8,
+                  border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer',
+                }}
+              >
+                No
+              </button>
+            </div>
           )}
         </div>
       )}

@@ -801,13 +801,14 @@ function montoLegible(n) {
 // (campos_inciertos), se puede corregir ahí mismo con un tap (pedido
 // explícito del usuario). Corregir NO le saca el resaltado a logística -
 // sigue viendo estado_revision='revisar' aunque se arregle acá.
-function GastoRow({ gasto, viajeId, onCambio, onBorrar }) {
+function GastoRow({ gasto, viajeId, onCambio, onBorrar, bloqueado }) {
   const [editando, setEditando] = useState(null); // 'fecha'|'motivo'|'monto'|'tipo_comprobante'|null
   const [valor, setValor] = useState('');
   const [guardando, setGuardando] = useState(false);
   const incierto = (campo) => (gasto.campos_inciertos || []).includes(campo);
 
   const abrirEdicion = (campo, valorActual) => {
+    if (bloqueado) return;
     setEditando(campo);
     setValor(String(valorActual ?? ''));
   };
@@ -825,7 +826,7 @@ function GastoRow({ gasto, viajeId, onCambio, onBorrar }) {
   };
 
   const campoStyle = (campo) => ({
-    cursor: 'pointer',
+    cursor: bloqueado ? 'default' : 'pointer',
     ...(incierto(campo) ? { color: '#b45309', textDecoration: 'underline dotted', fontWeight: 800 } : {}),
   });
 
@@ -873,7 +874,9 @@ function GastoRow({ gasto, viajeId, onCambio, onBorrar }) {
         <a href={gasto.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 18, textDecoration: 'none' }} title="Ver ticket">
           {String(gasto.tipo_mime || '').startsWith('image/') ? '🖼️' : '📄'}
         </a>
-        <button type="button" onClick={() => onBorrar(gasto.id)} style={{ background: 'none', border: 'none', color: '#991b1b', fontSize: 16, cursor: 'pointer', padding: 4 }}>🗑️</button>
+        {!bloqueado ? (
+          <button type="button" onClick={() => onBorrar(gasto.id)} style={{ background: 'none', border: 'none', color: '#991b1b', fontSize: 16, cursor: 'pointer', padding: 4 }}>🗑️</button>
+        ) : null}
       </div>
     </div>
   );
@@ -890,6 +893,8 @@ function GastosSheet({ viaje, onClose }) {
   useEffect(cargar, [viaje.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const total = (gastos || []).reduce((acc, g) => acc + Number(g.monto), 0);
+  // Rendición aprobada por logística = gastos congelados (el backend también lo bloquea).
+  const bloqueado = !!viaje.rendicion_aprobada_at;
 
   const onArchivoElegido = async (e) => {
     const f = e.target.files?.[0];
@@ -930,10 +935,16 @@ function GastosSheet({ viaje, onClose }) {
           Si algo queda subrayado en naranja, tocalo para corregirlo.
         </div>
 
-        <label style={{ ...s.botonPrimario, display: 'block', textAlign: 'center', marginBottom: 16 }}>
-          {subiendo ? 'Leyendo el comprobante…' : '📷 Agregar gasto (foto o PDF)'}
-          <input type="file" accept="image/*,application/pdf" style={{ display: 'none' }} disabled={subiendo} onChange={onArchivoElegido} />
-        </label>
+        {bloqueado ? (
+          <div style={{ background: '#f0fdf4', color: '#15803d', border: '1px solid #86efac', borderRadius: 10, padding: 10, fontWeight: 800, fontSize: 13, marginBottom: 16 }}>
+            ✅ Logística ya aprobó la rendición de este viaje: los gastos no se pueden agregar ni modificar.
+          </div>
+        ) : (
+          <label style={{ ...s.botonPrimario, display: 'block', textAlign: 'center', marginBottom: 16 }}>
+            {subiendo ? 'Leyendo el comprobante…' : '📷 Agregar gasto (foto o PDF)'}
+            <input type="file" accept="image/*,application/pdf" style={{ display: 'none' }} disabled={subiendo} onChange={onArchivoElegido} />
+          </label>
+        )}
         {err ? <div style={{ color: 'crimson', fontWeight: 700, fontSize: 13, marginBottom: 10 }}>{err}</div> : null}
 
         <div style={{ fontWeight: 900, fontSize: 14, marginBottom: 6 }}>Gastos cargados</div>
@@ -944,7 +955,7 @@ function GastosSheet({ viaje, onClose }) {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
             {gastos.map((g) => (
-              <GastoRow key={g.id} gasto={g} viajeId={viaje.id} onCambio={cargar} onBorrar={borrar} />
+              <GastoRow key={g.id} gasto={g} viajeId={viaje.id} onCambio={cargar} onBorrar={borrar} bloqueado={bloqueado} />
             ))}
           </div>
         )}

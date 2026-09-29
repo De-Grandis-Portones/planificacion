@@ -47,6 +47,7 @@ import LogisticaParadasExtraModal from './modals/LogisticaParadasExtraModal';
 import LogisticaWhatsappTemplatesModal from './modals/LogisticaWhatsappTemplatesModal';
 import LogisticaAdjuntosModal from './modals/LogisticaAdjuntosModal';
 import LogisticaViajeSemanaModal, { AgregarParadaExtra } from './LogisticaViajeSemanaModal';
+import { estadoViaje } from '../utils/estadoViaje';
 
 const ARGENTINA_CENTER = [-38.4, -63.6];
 const ARGENTINA_ZOOM = 4;
@@ -1210,8 +1211,9 @@ export default function LogisticaFechasMapaView({ canEdit, onCreated }) {
                       style={{
                         display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: activo ? 800 : 600,
                         padding: '3px 8px', borderRadius: 999, cursor: 'pointer',
-                        border: `1px solid ${activo ? color : 'var(--border)'}`,
-                        background: activo ? color : 'var(--surface)',
+                        border: `1px solid ${activo ? color : estadoViaje(viaje).border}`,
+                        // El seleccionado conserva el color de su ruta en el mapa; el resto, el del estado.
+                        background: activo ? color : estadoViaje(viaje).bg,
                         color: activo ? '#fff' : 'inherit',
                       }}
                     >
@@ -1226,10 +1228,11 @@ export default function LogisticaFechasMapaView({ canEdit, onCreated }) {
             {rutasPorViaje.filter(({ viajeId }) => viajeId === viajeActivoId).map(({ viajeId, viaje, color, puntosRuta }) => {
               const itemsRuta = itemsPorViajeMapa.get(viajeId) || [];
               return (
-                <div key={viajeId} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <div key={viajeId} style={{ border: `1px solid ${estadoViaje(viaje).border}`, background: estadoViaje(viaje).bg, borderRadius: 10, padding: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 999, background: color, flex: '0 0 auto' }} />
                     <span style={{ fontWeight: 800, fontSize: 12, flex: 1 }}>{viaje.nombre?.trim() || `Viaje #${viajeId}`}</span>
+                    <span style={{ fontSize: 9, fontWeight: 800, color: estadoViaje(viaje).fg, flex: '0 0 auto' }}>{estadoViaje(viaje).label}</span>
                     <button
                       type="button" className="btn" style={{ fontSize: 9, padding: '1px 5px', flex: '0 0 auto' }}
                       onClick={() => setSemanaModalAbierta(true)}

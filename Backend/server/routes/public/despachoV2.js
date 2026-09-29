@@ -86,6 +86,16 @@ async function requireViajeDeMiCuadrilla(req, res, viajeId) {
   return viaje;
 }
 
+// Con la rendición ya aprobada por logística los gastos quedan congelados -
+// pedido explícito del usuario: con el viaje finalizado se puede seguir
+// cargando (la hora de llegada queda fija, los tickets traen su propia
+// fecha), pero una vez aprobada ya no se agrega, edita ni borra nada.
+function rendicionCerrada(res, viaje) {
+  if (!viaje.rendicion_aprobada_at) return false;
+  res.status(409).json({ error: 'La rendición de este viaje ya fue aprobada por logística: no se pueden cargar ni modificar gastos.' });
+  return true;
+}
+
 // GET /despacho-v2/viajes?rango=10d|todos
 router.get('/despacho-v2/viajes', asyncRoute(async (req, res) => {
   const cuadrillas = await db.cuadrillasDeUsuario(req.despachoUser.qc_user_id);
@@ -278,6 +288,7 @@ router.get('/despacho-v2/viajes/:id/gastos', asyncRoute(async (req, res) => {
 router.post('/despacho-v2/viajes/:id/gastos', uploadGasto.single('archivo'), asyncRoute(async (req, res) => {
   const viaje = await requireViajeDeMiCuadrilla(req, res, req.params.id);
   if (!viaje) return;
+  if (rendicionCerrada(res, viaje)) return;
   if (!req.file) throw new Error('Falta la foto o el PDF del ticket');
 
   const path = `gasto-viaje-${req.params.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${extensionDeGasto(req.file.originalname, req.file.mimetype)}`;
@@ -304,7 +315,9 @@ router.post('/despacho-v2/viajes/:id/gastos', uploadGasto.single('archivo'), asy
 // otro) - pedido explícito del usuario. No cambia estado_revision: sigue
 // resaltado para logística aunque se corrija acá.
 router.patch('/despacho-v2/viajes/:id/gastos/:gastoId', asyncRoute(async (req, res) => {
-  if (!(await requireViajeDeMiCuadrilla(req, res, req.params.id))) return;
+  const viaje = await requireViajeDeMiCuadrilla(req, res, req.params.id);
+  if (!viaje) return;
+  if (rendicionCerrada(res, viaje)) return;
   const gastoExistente = await gastosDb.getGasto(req.params.gastoId);
   if (!gastoExistente || Number(gastoExistente.viaje_id) !== Number(req.params.id)) return res.status(404).json({ error: 'Gasto no encontrado' });
 
@@ -320,7 +333,9 @@ router.patch('/despacho-v2/viajes/:id/gastos/:gastoId', asyncRoute(async (req, r
 }));
 
 router.delete('/despacho-v2/viajes/:id/gastos/:gastoId', asyncRoute(async (req, res) => {
-  if (!(await requireViajeDeMiCuadrilla(req, res, req.params.id))) return;
+  const viaje = await requireViajeDeMiCuadrilla(req, res, req.params.id);
+  if (!viaje) return;
+  if (rendicionCerrada(res, viaje)) return;
   const gasto = await gastosDb.getGasto(req.params.gastoId);
   if (!gasto || Number(gasto.viaje_id) !== Number(req.params.id)) return res.status(404).json({ error: 'Gasto no encontrado' });
   const path = await gastosDb.borrarGasto(req.params.gastoId);

@@ -65,7 +65,7 @@ async function listViajesDeCuadrillas(cuadrillaIds, { soloProximos10 } = {}) {
     `
     select
       vi.id, vi.nombre, vi.fecha::text as fecha, to_char(vi.hora_salida, 'HH24:MI') as hora_salida,
-      vi.hora_salida_real, vi.hora_llegada_real, vi.ruta_real,
+      vi.hora_salida_real, vi.hora_llegada_real, vi.ruta_real, vi.rendicion_aprobada_at,
       c.id as cuadrilla_id, c.nombre as cuadrilla_nombre,
       ve.nombre as vehiculo_nombre, ve.capacidad_portones as vehiculo_capacidad,
       (select count(distinct p.nv)
@@ -113,6 +113,7 @@ async function listViajesDeCuadrillas(cuadrillaIds, { soloProximos10 } = {}) {
     hora_salida: r.hora_salida,
     hora_salida_real: r.hora_salida_real,
     hora_llegada_real: r.hora_llegada_real,
+    rendicion_aprobada_at: r.rendicion_aprobada_at,
     vehiculo_nombre: r.vehiculo_nombre,
     vehiculo_capacidad: r.vehiculo_capacidad,
     cuadrilla_id: r.cuadrilla_id,
@@ -131,7 +132,7 @@ async function listViajesDeCuadrillas(cuadrillaIds, { soloProximos10 } = {}) {
 
 async function getViajeCuadrilla(viajeId) {
   const { rows } = await pool.query(
-    `select id, cuadrilla_id, hora_salida_real, hora_llegada_real from public.logistica_viajes where id = $1;`,
+    `select id, cuadrilla_id, hora_salida_real, hora_llegada_real, rendicion_aprobada_at from public.logistica_viajes where id = $1;`,
     [Number(viajeId)]
   );
   return rows[0] || null;

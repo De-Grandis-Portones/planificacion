@@ -193,8 +193,9 @@ router.get('/despacho-v2/nv/:nv/medicion-media/:index', asyncRoute(async (req, r
   res.json({ ok: true, item });
 }));
 
-// POST /despacho-v2/viajes/:id/nv/:nv/marcar-entregado { tipo, pin? } -
-// cierre OFICIAL real (despacho: mismo PIN/QC que /despacho; instalación:
+// POST /despacho-v2/viajes/:id/nv/:nv/marcar-entregado { tipo } -
+// cierre OFICIAL real (despacho: mismo QC que /despacho, a nombre del
+// usuario logueado - sin volver a pedir PIN; instalación:
 // pone fecha_llegada_imput como ya hace /a, sin PIN porque no hay ninguno
 // hoy para ese campo). Devuelve la SIGUIENTE parada de la ruta para que el
 // frontend le pregunte al usuario "¿la ruta sigue así?" ANTES de mandar
@@ -202,7 +203,7 @@ router.get('/despacho-v2/nv/:nv/medicion-media/:index', asyncRoute(async (req, r
 router.post('/despacho-v2/viajes/:id/nv/:nv/marcar-entregado', asyncRoute(async (req, res) => {
   if (!(await requireViajeDeMiCuadrilla(req, res, req.params.id))) return;
   const tipo = String(req.body?.tipo || '').trim();
-  await db.marcarEntregado({ nv: req.params.nv, tipo, pin: req.body?.pin });
+  await db.marcarEntregado({ nv: req.params.nv, tipo, qcUserId: req.despachoUser.qc_user_id });
   const siguiente = WHATSAPP_AVISO_HABILITADO ? await db.siguienteParadaPorton(req.params.id, req.params.nv) : null;
   res.json({ ok: true, siguienteParada: siguiente, whatsappAvisoHabilitado: WHATSAPP_AVISO_HABILITADO });
 }));

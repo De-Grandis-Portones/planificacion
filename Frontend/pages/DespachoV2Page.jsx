@@ -182,38 +182,6 @@ function LoginScreen({ onLogueado }) {
 }
 
 // ===========================================================================
-// PIN de calidad (solo para el cierre de despacho - reusa el mismo QC/PIN
-// que ya usa /despacho, ver Backend lib/despachoV2Db.js marcarDespachoOficial).
-// ===========================================================================
-function PinSheet({ busy, error, onCancelar, onConfirmar }) {
-  const [pin, setPin] = useState('');
-  return (
-    <div style={{ ...s.overlay, zIndex: 10000 }} onMouseDown={(e) => { if (e.target === e.currentTarget) onCancelar(); }}>
-      <div style={{ ...s.hoja, maxWidth: 360 }}>
-        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
-          <div style={{ fontWeight: 900, fontSize: 18 }}>Confirmá tu PIN</div>
-          <button type="button" onClick={onCancelar} style={{ marginLeft: 'auto', background: 'none', border: 'none', fontSize: 22, lineHeight: 1, padding: 4 }}>✕</button>
-        </div>
-        <div style={{ fontSize: 13, opacity: 0.75, marginBottom: 10 }}>
-          Es el mismo PIN de calidad que ya usás para autorizar el despacho.
-        </div>
-        <input
-          type="password" inputMode="numeric" autoFocus value={pin}
-          onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 10))}
-          onKeyDown={(e) => e.key === 'Enter' && pin.length >= 3 && onConfirmar(pin)}
-          style={{ ...s.input, textAlign: 'center', fontSize: 26, letterSpacing: 6, padding: '14px', marginBottom: 10 }}
-          placeholder="••••"
-        />
-        {error ? <div style={{ color: 'crimson', fontWeight: 700, fontSize: 13, marginBottom: 10 }}>{error}</div> : null}
-        <button type="button" style={s.botonPrimario} disabled={busy || pin.length < 3} onClick={() => onConfirmar(pin)}>
-          {busy ? 'Confirmando…' : 'Confirmar despacho'}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ===========================================================================
 // "¿La ruta sigue como estaba?" - se pregunta SIEMPRE antes de avisar por
 // WhatsApp a la siguiente parada (pedido explícito del usuario: a veces se
 // altera en el viaje y no hay que avisarle a quien ya no sigue).
@@ -333,15 +301,14 @@ function ElegirParadaSheet({ viajeId, nvOrigen, busy, resultado, onElegir, onCer
 }
 
 // ===========================================================================
-// "Marcar entregado/instalado" - cierre OFICIAL real: despacho pide PIN
-// (mismo mecanismo que /despacho), instalación no (no existe ese mecanismo
-// hoy para ese campo, ver Backend lib/despachoV2Db.js). Al terminar, ofrece
+// "Marcar entregado/instalado" - cierre OFICIAL real: despacho queda a
+// nombre del usuario logueado (ya entró con su PIN, no se le vuelve a pedir),
+// instalación igual que antes (ver Backend lib/despachoV2Db.js). Al terminar, ofrece
 // avisar por WhatsApp a la siguiente parada de la ruta - pero antes SIEMPRE
 // pregunta si la ruta sigue igual.
 // ===========================================================================
 function MarcarEntregadoSection({ nv, viaje, parada, onParadaCambiada, stAbierta }) {
   const [tiposPendientes, setTiposPendientes] = useState(() => parada?.tipos_pendientes || []);
-  const [pinAbierto, setPinAbierto] = useState(false);
   const [marcando, setMarcando] = useState(false);
   const [err, setErr] = useState('');
   const [confirmarRuta, setConfirmarRuta] = useState(null); // { siguienteParada } | null
@@ -360,13 +327,12 @@ function MarcarEntregadoSection({ nv, viaje, parada, onParadaCambiada, stAbierta
 
   const cerrarTodo = () => { setConfirmarRuta(null); setResultadoAviso(null); setEligiendoParada(false); };
 
-  const confirmarMarcado = async (tipo, pin) => {
+  const confirmarMarcado = async (tipo) => {
     setMarcando(true);
     setErr('');
     try {
-      const r = await marcarEntregadoDespachoV2(viaje.id, nv, { tipo, pin });
+      const r = await marcarEntregadoDespachoV2(viaje.id, nv, { tipo });
       setTiposPendientes((prev) => prev.filter((t) => t !== tipo));
-      setPinAbierto(false);
       onParadaCambiada?.();
       // Aviso de WhatsApp apagado por ahora (WHATSAPP_AVISO_HABILITADO) - la
       // cuadrilla sigue avisando manual desde su propio WhatsApp, sin popup.
@@ -407,7 +373,7 @@ function MarcarEntregadoSection({ nv, viaje, parada, onParadaCambiada, stAbierta
   const alEnviarStDeCierre = (solicitud) => {
     setMostrarStCierre(false);
     setStAbiertaLocal(solicitud || null);
-    confirmarMarcado('instalacion', null);
+    confirmarMarcado('instalacion');
   };
 
   const stVisible = stAbiertaLocal || stAbierta;
@@ -433,8 +399,14 @@ function MarcarEntregadoSection({ nv, viaje, parada, onParadaCambiada, stAbierta
     <div style={{ marginBottom: 16 }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {tiposPendientes.includes('despacho') ? (
-          <button type="button" style={s.botonPrimario} disabled={marcando} onClick={() => { setErr(''); setPinAbierto(true); }}>
-            ✅ Marcar despacho entregado
+          <button
+            type="button" style={s.botonPrimario} disabled={marcando}
+            onClick={() => {
+              if (!window.confirm(`¿Confirmás que entregaste el NV ${nv}? Queda registrado a tu nombre.`)) return;
+              confirmarMarcado('despacho');
+            }}
+          >
+            {marcando ? 'Marcando…' : '✅ Marcar despacho entregado'}
           </button>
         ) : null}
         {tiposPendientes.includes('instalacion') ? (
@@ -461,14 +433,6 @@ function MarcarEntregadoSection({ nv, viaje, parada, onParadaCambiada, stAbierta
         ) : null}
       </div>
       {err ? <div style={{ color: 'crimson', fontWeight: 700, fontSize: 13, marginTop: 8 }}>{err}</div> : null}
-
-      {pinAbierto ? (
-        <PinSheet
-          busy={marcando} error={err}
-          onCancelar={() => { setPinAbierto(false); setErr(''); }}
-          onConfirmar={(pin) => confirmarMarcado('despacho', pin)}
-        />
-      ) : null}
 
       {confirmarRuta && !eligiendoParada ? (
         <ConfirmarRutaSheet

@@ -192,8 +192,8 @@ export async function fetchRemitosPorNv(nv) {
 // "Marcar entregado/instalado" - cierre OFICIAL (despacho: pin; instalación:
 // sin pin). Devuelve la siguiente parada-portón de la ruta (o null si esta
 // era la última) para preguntarle al usuario antes de avisar por WhatsApp.
-export async function marcarEntregadoDespachoV2(viajeId, nv, { tipo, pin } = {}) {
-  const { data } = await apiDespachoV2.post(`/despacho-v2/viajes/${viajeId}/nv/${nv}/marcar-entregado`, { tipo, pin });
+export async function marcarEntregadoDespachoV2(viajeId, nv, { tipo } = {}) {
+  const { data } = await apiDespachoV2.post(`/despacho-v2/viajes/${viajeId}/nv/${nv}/marcar-entregado`, { tipo });
   return data;
 }
 // Se llama SOLO después de que el usuario confirmó "sí, la ruta sigue así".

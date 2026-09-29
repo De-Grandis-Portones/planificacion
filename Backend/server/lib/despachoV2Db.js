@@ -286,14 +286,60 @@ async function crearSolicitudSt({ nv, descripcion, attachment, creadoPor }) {
 // que ya exista para este campo).
 const PORT = process.env.PORT || 4000;
 
-async function marcarDespachoOficial({ nv, pin }) {
+// Cierre oficial del despacho, los MISMOS dos pasos que /despacho:
+// 1) "stop" de la etapa despacho (queda Finalizado + hora de fin), y
+// 2) QC APROBADO de esa etapa (queda registrado quién y habilita las etapas
+//    siguientes, ver /qc/authorize).
+// Antes se llamaba solo a /qc/authorize con qc_status 'FINALIZADO', que no es
+// un estado de QC válido: el botón nunca llegó a funcionar (detectado
+// 2026-09-29). El QC queda a nombre del integrante de la cuadrilla logueado
+// (ya entró con su PIN): no se vuelve a pedir PIN. Ver lib/qcTokenInterno.js.
+async function marcarDespachoOficial({ nv, qcUserId }) {
   const axios = require('axios');
-  const { data } = await axios.post(
-    `http://127.0.0.1:${PORT}/qc/authorize`,
-    { line: 'portones', item_id: Number(nv), stage_key: 'despacho', qc_status: 'FINALIZADO', pin },
-    { timeout: 15000 }
+  const { QC_TOKEN_INTERNO } = require('./qcTokenInterno');
+  const { STATUS } = require('./workflow');
+
+  const { rows } = await pool.query(
+    `select p.id, e.estado
+       from public.portones p
+       left join public.porton_etapas_estado e on e.porton_id = p.id and e.etapa = 'despacho'
+      where p.nv = $1
+      order by p.created_at desc, p.id desc
+      limit 1;`,
+    [Number(nv)]
   );
-  return data;
+  const porton = rows[0];
+  if (!porton) throw Object.assign(new Error('No se encontró el portón de este NV'), { status: 404 });
+  if (!porton.estado) {
+    // Mismo criterio que /despacho: si todavía no llegó a la etapa despacho
+    // (le falta producción/control), no se fuerza fuera de orden.
+    throw Object.assign(new Error('Este portón todavía no está habilitado para despacho en planta (le falta terminar una etapa anterior o su control).'), { status: 409 });
+  }
+
+  const base = `http://127.0.0.1:${PORT}`;
+  if (String(porton.estado).trim().toLowerCase() !== STATUS.FINALIZADO.toLowerCase()) {
+    await axios.post(`${base}/portones/${porton.id}/stage`, { stage: 'despacho', action: 'stop' }, { timeout: 15000 });
+  }
+
+  const { rows: yaAprobado } = await pool.query(
+    `select 1 from public.qc_event
+      where line = 'portones' and item_id = $1 and stage_key = 'despacho' and qc_status = 'APROBADO'
+      limit 1;`,
+    [Number(nv)]
+  );
+  if (yaAprobado.length) return { ok: true, ya_aprobado: true };
+
+  try {
+    const { data } = await axios.post(
+      `${base}/qc/authorize`,
+      { line: 'portones', item_id: Number(nv), stage_key: 'despacho', qc_status: 'APROBADO', qc_user_id: Number(qcUserId) },
+      { timeout: 15000, headers: { 'x-qc-interno': QC_TOKEN_INTERNO } }
+    );
+    return data;
+  } catch (err) {
+    const msg = err?.response?.data?.error || err.message;
+    throw Object.assign(new Error(`No se pudo registrar el control de despacho: ${msg}`), { status: err?.response?.status || 500 });
+  }
 }
 
 async function marcarInstalacionOficial(nv) {
@@ -310,10 +356,10 @@ async function marcarInstalacionOficial(nv) {
   return hoy;
 }
 
-// tipo: 'despacho' | 'instalacion'. pin solo hace falta para despacho.
-async function marcarEntregado({ nv, tipo, pin }) {
+// tipo: 'despacho' | 'instalacion'. qcUserId = usuario logueado en despacho v2.
+async function marcarEntregado({ nv, tipo, qcUserId }) {
   if (tipo === 'despacho') {
-    const r = await marcarDespachoOficial({ nv, pin });
+    const r = await marcarDespachoOficial({ nv, qcUserId });
     return { ok: true, detalle: r };
   }
   if (tipo === 'instalacion') {

@@ -182,11 +182,17 @@ async function marcarLlegadaReal(viajeId) {
 // hace falta acumular desde la salida del viaje.
 async function listParadasDeViaje(viajeId) {
   const vId = Number(viajeId);
-  const [items, paradasExtra, viajeRow] = await Promise.all([
+  const [items, paradasExtra, viajeRow, entregas] = await Promise.all([
     fetchItems(vId),
     fetchParadasExtra(vId),
-    pool.query(`select ruta_real from public.logistica_viajes where id = $1;`, [vId]).then((r) => r.rows[0]),
+    pool.query(`select ruta_real, en_camino_nv from public.logistica_viajes where id = $1;`, [vId]).then((r) => r.rows[0]),
+    pool.query(`select nv, tipo from public.logistica_viaje_entregas where viaje_id = $1;`, [vId]).then((r) => r.rows),
   ]);
+  const entregadosPorNv = new Map();
+  for (const e of entregas) {
+    if (!entregadosPorNv.has(e.nv)) entregadosPorNv.set(e.nv, new Set());
+    entregadosPorNv.get(e.nv).add(e.tipo);
+  }
   const segmentosHoras = viajeRow?.ruta_real?.segmentos_horas || null;
 
   const nvsUnicos = Array.from(new Set(items.map((it) => it.nv)));
@@ -220,11 +226,17 @@ async function listParadasDeViaje(viajeId) {
     if (p.esExtra) return { tipo: 'extra', orden: p.orden, nombre: p.nombre, maps_url: p.maps_url, horas_tramo };
     const d = datosPorNv.get(p.nv) || {};
     const tipos = Array.from(tiposPorNv.get(p.nv) || []);
+    const hechos = entregadosPorNv.get(p.nv) || new Set();
+    const pendientes = tipos.filter((t) => !hechos.has(t));
+    const entregado = tipos.length > 0 && pendientes.length === 0;
     return {
       tipo: 'porton',
       nv: p.nv,
       orden: p.orden,
-      tipos_pendientes: tipos, // ['despacho'] | ['instalacion'] | ['despacho','instalacion']
+      tipos, // ['despacho'] | ['instalacion'] | ['despacho','instalacion']
+      tipos_pendientes: pendientes, // los que todavía no marcó la cuadrilla en este viaje
+      entregado, // rojo en la lista
+      en_camino: !entregado && Number(viajeRow?.en_camino_nv) === p.nv, // amarillo en la lista
       nombre_cliente: d.nombre_cliente || null,
       distribuidor: d.distribuidor || null,
       localidad: d.localidad || null,
@@ -356,17 +368,54 @@ async function marcarInstalacionOficial(nv) {
   return hoy;
 }
 
+async function registrarEntregaEnViaje({ viajeId, nv, tipo, entregadoPor }) {
+  await pool.query(
+    `insert into public.logistica_viaje_entregas (viaje_id, nv, tipo, entregado_por)
+     values ($1, $2, $3, $4)
+     on conflict (viaje_id, nv, tipo) do nothing;`,
+    [Number(viajeId), Number(nv), tipo, entregadoPor || null]
+  );
+}
+
 // tipo: 'despacho' | 'instalacion'. qcUserId = usuario logueado en despacho v2.
-async function marcarEntregado({ nv, tipo, qcUserId }) {
+async function marcarEntregado({ viajeId, nv, tipo, qcUserId, entregadoPor }) {
+  let r;
   if (tipo === 'despacho') {
-    const r = await marcarDespachoOficial({ nv, qcUserId });
-    return { ok: true, detalle: r };
+    r = { ok: true, detalle: await marcarDespachoOficial({ nv, qcUserId }) };
+  } else if (tipo === 'instalacion') {
+    r = { ok: true, fecha_llegada: await marcarInstalacionOficial(nv) };
+  } else {
+    throw new Error("tipo debe ser 'despacho' o 'instalacion'");
   }
-  if (tipo === 'instalacion') {
-    const fecha = await marcarInstalacionOficial(nv);
-    return { ok: true, fecha_llegada: fecha };
-  }
-  throw new Error("tipo debe ser 'despacho' o 'instalacion'");
+  await registrarEntregaEnViaje({ viajeId, nv, tipo, entregadoPor });
+  return r;
+}
+
+// "¿La ruta sigue según lo planificado?" - la cuadrilla confirma cuál es la
+// próxima parada (la siguiente del plan, o la que eligió si la ruta cambió)
+// y si va a hacer una pausa antes (ej. almorzar). Queda marcada en amarillo
+// en la lista y, si el aviso de WhatsApp está habilitado, se manda sumando
+// la pausa a la demora estimada.
+async function marcarEnCamino({ viajeId, nvOrigen, nvDestino, pausaMin, enviadoPor, avisar }) {
+  const paradas = await listParadasDeViaje(viajeId);
+  const destino = nvDestino
+    ? paradas.find((p) => p.tipo === 'porton' && p.nv === Number(nvDestino))
+    : await siguienteParadaPorton(viajeId, nvOrigen);
+  if (nvDestino && !destino) throw Object.assign(new Error('Esa parada no pertenece a este viaje'), { status: 404 });
+  if (!destino) return { ok: true, destino: null, aviso: null };
+
+  const pausa = Math.max(0, Math.min(600, Math.round(Number(pausaMin) || 0)));
+  await pool.query(
+    `update public.logistica_viajes
+        set en_camino_nv = $2, en_camino_pausa_min = $3, en_camino_at = now()
+      where id = $1;`,
+    [Number(viajeId), destino.nv, pausa]
+  );
+
+  const aviso = avisar
+    ? await enviarAvisoParaParada({ viajeId, parada: destino, nvOrigen: Number(nvOrigen), enviadoPor, pausaMin: pausa })
+    : null;
+  return { ok: true, destino, pausaMin: pausa, aviso };
 }
 
 // Próxima PARADA-PORTÓN de la ruta después de la actual (salta paradas
@@ -377,7 +426,7 @@ async function siguienteParadaPorton(viajeId, nvActual) {
   const idx = paradas.findIndex((p) => p.tipo === 'porton' && p.nv === Number(nvActual));
   if (idx === -1) return null;
   for (let i = idx + 1; i < paradas.length; i++) {
-    if (paradas[i].tipo === 'porton') return paradas[i];
+    if (paradas[i].tipo === 'porton' && !paradas[i].entregado) return paradas[i];
   }
   return null;
 }
@@ -454,7 +503,7 @@ async function registrarAviso({ viajeId, nvOrigen, nvDestino, telefono, resultad
 // porque la ruta cambió). `nvOrigen` es solo para el log (de qué NV se
 // viene) - en el caso de la primera parada no hay un "de dónde viene", así
 // que los callers pasan el mismo nv de destino.
-async function enviarAvisoParaParada({ viajeId, parada, nvOrigen, enviadoPor }) {
+async function enviarAvisoParaParada({ viajeId, parada, nvOrigen, enviadoPor, pausaMin = 0 }) {
   const whatsapp = require('./logisticaWhatsapp');
 
   const [nvDetalle, datos] = await Promise.all([getNvDetalle(parada.nv), datosParaAviso(viajeId)]);
@@ -470,7 +519,10 @@ async function enviarAvisoParaParada({ viajeId, parada, nvOrigen, enviadoPor }) 
   const resultado = await whatsapp.enviarAvisoEnCamino({
     telefono: telefonoDestino,
     nombreCliente: nvDetalle?.nombre_cliente,
-    horasTexto: formatearDuracionHoras(parada.horas_tramo),
+    // La pausa que informó la cuadrilla (ej. almuerzo) se suma al tramo.
+    horasTexto: formatearDuracionHoras(
+      parada.horas_tramo == null && !pausaMin ? null : Number(parada.horas_tramo || 0) + Number(pausaMin || 0) / 60
+    ),
     cuadrillaTexto: datos.cuadrillaTexto,
     vehiculoNombre: datos.vehiculoNombre,
     fotosMiembros: datos.fotosMiembros,
@@ -484,6 +536,7 @@ async function enviarAvisoParaParada({ viajeId, parada, nvOrigen, enviadoPor }) 
   return {
     ok: resultado.ok, error: resultado.error, siguienteNv: parada.nv,
     nombreCliente: nvDetalle?.nombre_cliente, horasTramo: parada.horas_tramo,
+    destinoEsPrueba: !!telefonoTest,
   };
 }
 
@@ -520,6 +573,6 @@ module.exports = {
   listQcUsersDeCuadrillas, getQcUser, cuadrillasDeUsuario,
   listViajesDeCuadrillas, getViajeCuadrilla, marcarSalidaReal, marcarLlegadaReal,
   listParadasDeViaje, getNvDetalle, crearSolicitudSt,
-  marcarEntregado, siguienteParadaPorton, primeraParadaPorton,
+  marcarEntregado, marcarEnCamino, siguienteParadaPorton, primeraParadaPorton,
   avisarPrimeraParada, avisarSiguienteParada, avisarParadaElegida, datosParaAviso,
 };

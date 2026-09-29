@@ -203,9 +203,32 @@ router.get('/despacho-v2/nv/:nv/medicion-media/:index', asyncRoute(async (req, r
 router.post('/despacho-v2/viajes/:id/nv/:nv/marcar-entregado', asyncRoute(async (req, res) => {
   if (!(await requireViajeDeMiCuadrilla(req, res, req.params.id))) return;
   const tipo = String(req.body?.tipo || '').trim();
-  await db.marcarEntregado({ nv: req.params.nv, tipo, qcUserId: req.despachoUser.qc_user_id });
-  const siguiente = WHATSAPP_AVISO_HABILITADO ? await db.siguienteParadaPorton(req.params.id, req.params.nv) : null;
+  await db.marcarEntregado({
+    viajeId: req.params.id, nv: req.params.nv, tipo,
+    qcUserId: req.despachoUser.qc_user_id, entregadoPor: req.despachoUser.name,
+  });
+  // La siguiente parada se devuelve SIEMPRE (no solo con WhatsApp prendido):
+  // la cuadrilla confirma "¿la ruta sigue según lo planificado?" + pausa
+  // para marcarla en camino (ver /en-camino).
+  const siguiente = await db.siguienteParadaPorton(req.params.id, req.params.nv);
   res.json({ ok: true, siguienteParada: siguiente, whatsappAvisoHabilitado: WHATSAPP_AVISO_HABILITADO });
+}));
+
+// POST /despacho-v2/viajes/:id/nv/:nv/en-camino { nvDestino?, pausaMin } -
+// después de marcar una entrega: confirma la próxima parada (sin nvDestino
+// = la siguiente del plan; con nvDestino = la ruta cambió y eligió otra) y
+// la pausa previa en minutos. Si WHATSAPP_AVISO_HABILITADO, manda el aviso
+// sumando la pausa a la demora (mientras WHATSAPP_AVISO_TELEFONO_TEST esté
+// cargado, va a ese número - hoy logística - en vez de al cliente).
+router.post('/despacho-v2/viajes/:id/nv/:nv/en-camino', asyncRoute(async (req, res) => {
+  if (!(await requireViajeDeMiCuadrilla(req, res, req.params.id))) return;
+  const resultado = await db.marcarEnCamino({
+    viajeId: req.params.id, nvOrigen: req.params.nv,
+    nvDestino: req.body?.nvDestino ? Number(req.body.nvDestino) : null,
+    pausaMin: req.body?.pausaMin, enviadoPor: req.despachoUser.name,
+    avisar: WHATSAPP_AVISO_HABILITADO,
+  });
+  res.json({ ...resultado, whatsappAvisoHabilitado: WHATSAPP_AVISO_HABILITADO });
 }));
 
 // POST /despacho-v2/viajes/:id/nv/:nv/avisar-siguiente - se llama SOLO
@@ -231,7 +254,9 @@ router.get('/despacho-v2/viajes/:id/nv/:nv/paradas-restantes', asyncRoute(async 
   if (!(await requireViajeDeMiCuadrilla(req, res, req.params.id))) return;
   const paradas = await db.listParadasDeViaje(req.params.id);
   const idx = paradas.findIndex((p) => p.tipo === 'porton' && p.nv === Number(req.params.nv));
-  const restantes = idx === -1 ? [] : paradas.slice(idx + 1).filter((p) => p.tipo === 'porton');
+  // Todas las que falta entregar (no solo las que venían después en el plan):
+  // si la ruta cambió, pueden volver a una anterior que quedó pendiente.
+  const restantes = idx === -1 ? [] : paradas.filter((p) => p.tipo === 'porton' && !p.entregado && p.nv !== Number(req.params.nv));
   res.json({ ok: true, restantes });
 }));
 

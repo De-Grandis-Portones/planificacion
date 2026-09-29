@@ -196,6 +196,13 @@ export async function marcarEntregadoDespachoV2(viajeId, nv, { tipo } = {}) {
   const { data } = await apiDespachoV2.post(`/despacho-v2/viajes/${viajeId}/nv/${nv}/marcar-entregado`, { tipo });
   return data;
 }
+// Después de marcar una entrega: confirma la próxima parada (sin nvDestino =
+// la siguiente del plan) y la pausa previa en minutos. Ver Backend
+// routes/public/despachoV2.js (/en-camino).
+export async function enCaminoDespachoV2(viajeId, nv, { nvDestino = null, pausaMin = 0 } = {}) {
+  const { data } = await apiDespachoV2.post(`/despacho-v2/viajes/${viajeId}/nv/${nv}/en-camino`, { nvDestino, pausaMin });
+  return data;
+}
 // Se llama SOLO después de que el usuario confirmó "sí, la ruta sigue así".
 export async function avisarSiguienteDespachoV2(viajeId, nv) {
   const { data } = await apiDespachoV2.post(`/despacho-v2/viajes/${viajeId}/nv/${nv}/avisar-siguiente`);

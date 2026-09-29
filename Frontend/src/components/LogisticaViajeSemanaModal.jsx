@@ -37,6 +37,7 @@ import LogisticaIaConfigModal from './modals/LogisticaIaConfigModal';
 import PortonesMapaModal from './modals/PortonesMapaModal';
 import LogisticaMensajeViajeModal from './modals/LogisticaMensajeViajeModal';
 import LogisticaAdjuntosModal from './modals/LogisticaAdjuntosModal';
+import { estadoViaje } from '../utils/estadoViaje';
 
 // NV únicos (despacho e instalación del mismo NV son el mismo domicilio).
 function uniqueNvs(items) {
@@ -436,6 +437,7 @@ function ViajeColumn({ viaje, items, canEdit, cerrada, onDropItem, onReorder, on
   const usado = Number(viaje.peso_despacho_usado || 0);
   const puedeReordenar = canEdit && !cerrada && items.length > 1;
   const horarios = horariosPorParada(items, viaje.hora_salida, viaje.ruta_real?.segmentos_horas);
+  const estado = estadoViaje(viaje);
 
   return (
     <div
@@ -453,14 +455,15 @@ function ViajeColumn({ viaje, items, canEdit, cerrada, onDropItem, onReorder, on
       }}
       style={{
         minWidth: 260, maxWidth: 260, display: 'flex', flexDirection: 'column', gap: 8,
-        border: `1px solid ${over ? 'var(--brand)' : 'var(--border)'}`,
+        border: `1px solid ${over ? 'var(--brand)' : estado.border}`,
         borderRadius: 12, padding: 10,
-        background: over ? 'var(--brand-100)' : 'var(--surface)',
+        background: over ? 'var(--brand-100)' : estado.bg,
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
         <div>
           <div style={{ fontWeight: 900, fontSize: 13 }}>{viaje.nombre?.trim() || `Viaje #${viaje.id}`}</div>
+          <div style={{ fontSize: 10, fontWeight: 800, color: estado.fg }}>● {estado.label}</div>
           <div style={{ fontSize: 11, opacity: 0.75 }}>
             {String(viaje.fecha).slice(0, 10).split('-').reverse().join('/')}
             {viaje.hora_salida ? ` · sale ${viaje.hora_salida}` : ''}

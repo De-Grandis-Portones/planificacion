@@ -16,6 +16,77 @@ const TICKET_LIST_COLUMNS = `
   ruta_origen, app_origen, board_column, en_progreso_por, created_at, updated_at
 `;
 
+// Nombre real de la persona, para mostrar en vez del usuario de login
+// ("comercial1" -> "Diego ..."). creado_por_id / autor_id son el id en la
+// tabla de usuarios de la app de origen, que vive en esta misma base:
+// presupuestador_users.full_name para el Presupuestador, admin_users.name
+// para Planificación (sus tickets, las tareas del tablero y todas las
+// respuestas de soporte). Se resuelve al leer, no se guarda: así los tickets
+// viejos también muestran el nombre y un cambio en Usuarios se ve enseguida.
+// Sin nombre cargado queda el usuario de siempre (remitos e informe-ventas
+// ya guardan el nombre que escribe la persona; distribuidor, el de la
+// empresa; integrador, el email). Mismo criterio que logisticaConsultasDb.js.
+//
+// presupuestador_users está en producción pero no necesariamente en una base
+// local de prueba: si falta, sin este chequeo se caería todo el listado de
+// tickets en vez de solo quedar el usuario de login.
+let nombresSqlPromise = null;
+function nombresSql() {
+  if (!nombresSqlPromise) {
+    nombresSqlPromise = pool
+      .query(`select to_regclass('public.presupuestador_users') is not null as ok;`)
+      .then(({ rows }) => armarNombresSql(!!rows[0]?.ok))
+      .catch((err) => {
+        nombresSqlPromise = null;
+        throw err;
+      });
+  }
+  return nombresSqlPromise;
+}
+
+// Todas esperan la fila del ticket con alias `t` (y la del mensaje con `m`).
+function armarNombresSql(hayPresupuestadorUsers) {
+  const adminNombre = (idCol) =>
+    `(select nullif(trim(au.name), '') from public.admin_users au where au.id::text = ${idCol}::text)`;
+  const presupuestadorNombre = (idCol) =>
+    hayPresupuestadorUsers
+      ? `(select nullif(trim(pu.full_name), '') from public.presupuestador_users pu where pu.id::text = ${idCol}::text)`
+      : 'null';
+  return {
+    creadoPor: `
+      coalesce(
+        case when t.app_origen = 'presupuestador' then ${presupuestadorNombre('t.creado_por_id')} end,
+        case when t.app_origen in ('planificacion', 'tarea') then ${adminNombre('t.creado_por_id')} end,
+        t.creado_por_username
+      ) as creado_por_nombre`,
+    // en_progreso_por guarda el username del admin (req.admin.username), no el id.
+    enProgresoPor: `
+      coalesce(
+        (select nullif(trim(au.name), '') from public.admin_users au where au.username = t.en_progreso_por),
+        t.en_progreso_por
+      ) as en_progreso_por_nombre`,
+    // Una respuesta de soporte (es_admin) siempre es de un admin de
+    // Planificación; la del usuario, de la tabla de la app del ticket.
+    autor: `
+      coalesce(
+        case when m.es_admin or t.app_origen in ('planificacion', 'tarea') then ${adminNombre('m.autor_id')} end,
+        case when not m.es_admin and t.app_origen = 'presupuestador' then ${presupuestadorNombre('m.autor_id')} end,
+        m.autor_username
+      ) as autor_nombre`,
+  };
+}
+
+// Para las escrituras que devuelven la fila: el modal/tablero la usan tal
+// cual para refrescar sin recargar, así que también tiene que traer los nombres.
+async function returningConNombres(sqlSinReturning, params) {
+  const n = await nombresSql();
+  const { rows } = await pool.query(
+    `with t as (${sqlSinReturning} returning *) select t.*, ${n.creadoPor}, ${n.enProgresoPor} from t;`,
+    params
+  );
+  return rows[0] || null;
+}
+
 async function createTicket({ categoria, mensaje, rutaOrigen, creadoPorId, creadoPorUsername, appOrigen, boardColumn, adjuntos }) {
   const appOrigenFinal = appOrigen || 'planificacion';
   // Una tarjeta "tarea" arranca viéndose en la columna donde se creó (la
@@ -26,11 +97,10 @@ async function createTicket({ categoria, mensaje, rutaOrigen, creadoPorId, cread
   // El caller (routes/admin/tickets.js) ya validó que boardColumn sea una
   // columna existente antes de llegar acá.
   const boardColumnFinal = appOrigenFinal === 'tarea' ? (boardColumn || 'tarea') : null;
-  const { rows } = await pool.query(
+  return returningConNombres(
     `
     insert into public.tickets (categoria, mensaje, ruta_origen, creado_por_id, creado_por_username, app_origen, board_column, adjuntos)
     values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
-    returning *;
     `,
     [
       categoria,
@@ -43,7 +113,6 @@ async function createTicket({ categoria, mensaje, rutaOrigen, creadoPorId, cread
       JSON.stringify(Array.isArray(adjuntos) ? adjuntos : []),
     ]
   );
-  return rows[0];
 }
 
 async function listMyTickets(userId) {
@@ -70,16 +139,24 @@ async function listAllTickets({ estado, categoria, appOrigen } = {}) {
     conditions.push(`app_origen = $${params.length}`);
   }
   const where = conditions.length ? `where ${conditions.join(' and ')}` : '';
+  const n = await nombresSql();
   const { rows } = await pool.query(
-    `select ${TICKET_LIST_COLUMNS} from public.tickets ${where} order by created_at desc;`,
+    `select ${TICKET_LIST_COLUMNS}, ${n.creadoPor}, ${n.enProgresoPor} from public.tickets t ${where} order by created_at desc;`,
     params
   );
   return rows;
 }
 
 async function listMessages(ticketId) {
+  const n = await nombresSql();
   const { rows } = await pool.query(
-    `select * from public.ticket_mensajes where ticket_id = $1 order by created_at asc;`,
+    `
+    select m.*, ${n.autor}
+      from public.ticket_mensajes m
+      join public.tickets t on t.id = m.ticket_id
+     where m.ticket_id = $1
+     order by m.created_at asc;
+    `,
     [ticketId]
   );
   return rows;
@@ -97,7 +174,11 @@ async function getTicketForOwner(id, userId) {
 }
 
 async function getTicketAdmin(id) {
-  const { rows } = await pool.query(`select * from public.tickets where id = $1;`, [id]);
+  const n = await nombresSql();
+  const { rows } = await pool.query(
+    `select t.*, ${n.creadoPor}, ${n.enProgresoPor} from public.tickets t where t.id = $1;`,
+    [id]
+  );
   const ticket = rows[0];
   if (!ticket) return null;
   const mensajes = await listMessages(id);
@@ -125,24 +206,21 @@ async function addMessage(ticketId, { autorId, autorUsername, esAdmin, mensaje }
 // como estaba (queda como "quién lo resolvió").
 async function setEstado(id, estado, actorUsername) {
   if (estado === 'in_progress') {
-    const { rows } = await pool.query(
-      `update public.tickets set estado = $2, en_progreso_por = $3, updated_at = now() where id = $1 returning *;`,
+    return returningConNombres(
+      `update public.tickets set estado = $2, en_progreso_por = $3, updated_at = now() where id = $1`,
       [id, estado, actorUsername || null]
     );
-    return rows[0];
   }
   if (estado === 'pending') {
-    const { rows } = await pool.query(
-      `update public.tickets set estado = $2, en_progreso_por = null, updated_at = now() where id = $1 returning *;`,
+    return returningConNombres(
+      `update public.tickets set estado = $2, en_progreso_por = null, updated_at = now() where id = $1`,
       [id, estado]
     );
-    return rows[0];
   }
-  const { rows } = await pool.query(
-    `update public.tickets set estado = $2, updated_at = now() where id = $1 returning *;`,
+  return returningConNombres(
+    `update public.tickets set estado = $2, updated_at = now() where id = $1`,
     [id, estado]
   );
-  return rows[0];
 }
 
 // Mueve una tarjeta "tarea" a otra columna del tablero. A propósito NO
@@ -222,11 +300,10 @@ async function createApartado(nombre) {
 // importar en qué estado esté (no hace falta que esté "En curso"). `valor`
 // null lo libera.
 async function setEnProgresoPor(id, valor) {
-  const { rows } = await pool.query(
-    `update public.tickets set en_progreso_por = $2, updated_at = now() where id = $1 returning *;`,
+  return returningConNombres(
+    `update public.tickets set en_progreso_por = $2, updated_at = now() where id = $1`,
     [id, valor]
   );
-  return rows[0] || null;
 }
 
 // Borrar un apartado custom. Las tarjetas "tarea" que estaban viviendo ahí

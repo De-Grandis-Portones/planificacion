@@ -589,7 +589,7 @@ export default function TicketWidget() {
                   {(ticketSeleccionado.mensajes || []).map((m) => (
                     <div key={m.id} style={{ marginBottom: 8 }}>
                       <div style={{ fontSize: 11, color: 'var(--ink-weak)' }}>
-                        {m.es_admin ? (m.autor_username || 'Soporte') : 'Vos'} · {new Date(m.created_at).toLocaleString()}
+                        {m.es_admin ? (m.autor_nombre || m.autor_username || 'Soporte') : 'Vos'} · {new Date(m.created_at).toLocaleString()}
                       </div>
                       <div style={{ fontSize: 13, whiteSpace: 'pre-wrap' }}>{m.mensaje}</div>
                     </div>

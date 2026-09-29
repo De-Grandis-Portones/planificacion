@@ -5,11 +5,13 @@
 // texto plano.
 import { colorForUsername, initialsForUsername } from '../utils/userAvatar';
 
-export default function UserAvatar({ username, size = 18 }) {
+// `name` (opcional) es el nombre real: si viene, las iniciales y el tooltip
+// salen de ahí; el color sigue atado al username para que no cambie.
+export default function UserAvatar({ username, name, size = 18 }) {
   if (!username) return null;
   return (
     <span
-      title={username}
+      title={name || username}
       style={{
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
         width: size, height: size, minWidth: size, borderRadius: '50%', flexShrink: 0,
@@ -17,7 +19,7 @@ export default function UserAvatar({ username, size = 18 }) {
         fontSize: Math.max(9, Math.round(size * 0.5)), fontWeight: 700, lineHeight: 1,
       }}
     >
-      {initialsForUsername(username)}
+      {initialsForUsername(name || username)}
     </span>
   );
 }

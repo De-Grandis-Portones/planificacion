@@ -832,6 +832,28 @@ const MIGRATIONS = [
       );
     `,
   },
+  {
+    // Entregas/instalaciones marcadas por la cuadrilla en /despacho_v2, por
+    // viaje (pedido explícito del usuario, 2026-09-29): con esto la lista de
+    // paradas pinta en rojo lo ya entregado y ya no vuelve a ofrecer el
+    // botón de cierre. Y la parada "en camino" (amarillo) + la pausa que
+    // informó la cuadrilla (ej. almuerzo), que se suma a la demora del aviso.
+    name: 'logistica_viaje_entregas_en_camino',
+    sql: `
+      CREATE TABLE IF NOT EXISTS public.logistica_viaje_entregas (
+        id SERIAL PRIMARY KEY,
+        viaje_id INTEGER NOT NULL REFERENCES public.logistica_viajes(id) ON DELETE CASCADE,
+        nv INTEGER NOT NULL,
+        tipo TEXT NOT NULL,
+        entregado_por TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (viaje_id, nv, tipo)
+      );
+      ALTER TABLE public.logistica_viajes ADD COLUMN IF NOT EXISTS en_camino_nv INTEGER;
+      ALTER TABLE public.logistica_viajes ADD COLUMN IF NOT EXISTS en_camino_pausa_min INTEGER;
+      ALTER TABLE public.logistica_viajes ADD COLUMN IF NOT EXISTS en_camino_at TIMESTAMPTZ;
+    `,
+  },
 ];
 
 async function runMigrations() {

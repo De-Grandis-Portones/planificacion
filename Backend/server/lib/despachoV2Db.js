@@ -182,11 +182,17 @@ async function marcarLlegadaReal(viajeId) {
 // hace falta acumular desde la salida del viaje.
 async function listParadasDeViaje(viajeId) {
   const vId = Number(viajeId);
-  const [items, paradasExtra, viajeRow] = await Promise.all([
+  const [items, paradasExtra, viajeRow, entregas] = await Promise.all([
     fetchItems(vId),
     fetchParadasExtra(vId),
-    pool.query(`select ruta_real from public.logistica_viajes where id = $1;`, [vId]).then((r) => r.rows[0]),
+    pool.query(`select ruta_real, en_camino_nv from public.logistica_viajes where id = $1;`, [vId]).then((r) => r.rows[0]),
+    pool.query(`select nv, tipo from public.logistica_viaje_entregas where viaje_id = $1;`, [vId]).then((r) => r.rows),
   ]);
+  const entregadosPorNv = new Map();
+  for (const e of entregas) {
+    if (!entregadosPorNv.has(e.nv)) entregadosPorNv.set(e.nv, new Set());
+    entregadosPorNv.get(e.nv).add(e.tipo);
+  }
   const segmentosHoras = viajeRow?.ruta_real?.segmentos_horas || null;
 
   const nvsUnicos = Array.from(new Set(items.map((it) => it.nv)));
@@ -220,11 +226,17 @@ async function listParadasDeViaje(viajeId) {
     if (p.esExtra) return { tipo: 'extra', orden: p.orden, nombre: p.nombre, maps_url: p.maps_url, horas_tramo };
     const d = datosPorNv.get(p.nv) || {};
     const tipos = Array.from(tiposPorNv.get(p.nv) || []);
+    const hechos = entregadosPorNv.get(p.nv) || new Set();
+    const pendientes = tipos.filter((t) => !hechos.has(t));
+    const entregado = tipos.length > 0 && pendientes.length === 0;
     return {
       tipo: 'porton',
       nv: p.nv,
       orden: p.orden,
-      tipos_pendientes: tipos, // ['despacho'] | ['instalacion'] | ['despacho','instalacion']
+      tipos, // ['despacho'] | ['instalacion'] | ['despacho','instalacion']
+      tipos_pendientes: pendientes, // los que todavía no marcó la cuadrilla en este viaje
+      entregado, // rojo en la lista
+      en_camino: !entregado && Number(viajeRow?.en_camino_nv) === p.nv, // amarillo en la lista
       nombre_cliente: d.nombre_cliente || null,
       distribuidor: d.distribuidor || null,
       localidad: d.localidad || null,
@@ -286,14 +298,60 @@ async function crearSolicitudSt({ nv, descripcion, attachment, creadoPor }) {
 // que ya exista para este campo).
 const PORT = process.env.PORT || 4000;
 
-async function marcarDespachoOficial({ nv, pin }) {
+// Cierre oficial del despacho, los MISMOS dos pasos que /despacho:
+// 1) "stop" de la etapa despacho (queda Finalizado + hora de fin), y
+// 2) QC APROBADO de esa etapa (queda registrado quién y habilita las etapas
+//    siguientes, ver /qc/authorize).
+// Antes se llamaba solo a /qc/authorize con qc_status 'FINALIZADO', que no es
+// un estado de QC válido: el botón nunca llegó a funcionar (detectado
+// 2026-09-29). El QC queda a nombre del integrante de la cuadrilla logueado
+// (ya entró con su PIN): no se vuelve a pedir PIN. Ver lib/qcTokenInterno.js.
+async function marcarDespachoOficial({ nv, qcUserId }) {
   const axios = require('axios');
-  const { data } = await axios.post(
-    `http://127.0.0.1:${PORT}/qc/authorize`,
-    { line: 'portones', item_id: Number(nv), stage_key: 'despacho', qc_status: 'FINALIZADO', pin },
-    { timeout: 15000 }
+  const { QC_TOKEN_INTERNO } = require('./qcTokenInterno');
+  const { STATUS } = require('./workflow');
+
+  const { rows } = await pool.query(
+    `select p.id, e.estado
+       from public.portones p
+       left join public.porton_etapas_estado e on e.porton_id = p.id and e.etapa = 'despacho'
+      where p.nv = $1
+      order by p.created_at desc, p.id desc
+      limit 1;`,
+    [Number(nv)]
   );
-  return data;
+  const porton = rows[0];
+  if (!porton) throw Object.assign(new Error('No se encontró el portón de este NV'), { status: 404 });
+  if (!porton.estado) {
+    // Mismo criterio que /despacho: si todavía no llegó a la etapa despacho
+    // (le falta producción/control), no se fuerza fuera de orden.
+    throw Object.assign(new Error('Este portón todavía no está habilitado para despacho en planta (le falta terminar una etapa anterior o su control).'), { status: 409 });
+  }
+
+  const base = `http://127.0.0.1:${PORT}`;
+  if (String(porton.estado).trim().toLowerCase() !== STATUS.FINALIZADO.toLowerCase()) {
+    await axios.post(`${base}/portones/${porton.id}/stage`, { stage: 'despacho', action: 'stop' }, { timeout: 15000 });
+  }
+
+  const { rows: yaAprobado } = await pool.query(
+    `select 1 from public.qc_event
+      where line = 'portones' and item_id = $1 and stage_key = 'despacho' and qc_status = 'APROBADO'
+      limit 1;`,
+    [Number(nv)]
+  );
+  if (yaAprobado.length) return { ok: true, ya_aprobado: true };
+
+  try {
+    const { data } = await axios.post(
+      `${base}/qc/authorize`,
+      { line: 'portones', item_id: Number(nv), stage_key: 'despacho', qc_status: 'APROBADO', qc_user_id: Number(qcUserId) },
+      { timeout: 15000, headers: { 'x-qc-interno': QC_TOKEN_INTERNO } }
+    );
+    return data;
+  } catch (err) {
+    const msg = err?.response?.data?.error || err.message;
+    throw Object.assign(new Error(`No se pudo registrar el control de despacho: ${msg}`), { status: err?.response?.status || 500 });
+  }
 }
 
 async function marcarInstalacionOficial(nv) {
@@ -310,17 +368,54 @@ async function marcarInstalacionOficial(nv) {
   return hoy;
 }
 
-// tipo: 'despacho' | 'instalacion'. pin solo hace falta para despacho.
-async function marcarEntregado({ nv, tipo, pin }) {
+async function registrarEntregaEnViaje({ viajeId, nv, tipo, entregadoPor }) {
+  await pool.query(
+    `insert into public.logistica_viaje_entregas (viaje_id, nv, tipo, entregado_por)
+     values ($1, $2, $3, $4)
+     on conflict (viaje_id, nv, tipo) do nothing;`,
+    [Number(viajeId), Number(nv), tipo, entregadoPor || null]
+  );
+}
+
+// tipo: 'despacho' | 'instalacion'. qcUserId = usuario logueado en despacho v2.
+async function marcarEntregado({ viajeId, nv, tipo, qcUserId, entregadoPor }) {
+  let r;
   if (tipo === 'despacho') {
-    const r = await marcarDespachoOficial({ nv, pin });
-    return { ok: true, detalle: r };
+    r = { ok: true, detalle: await marcarDespachoOficial({ nv, qcUserId }) };
+  } else if (tipo === 'instalacion') {
+    r = { ok: true, fecha_llegada: await marcarInstalacionOficial(nv) };
+  } else {
+    throw new Error("tipo debe ser 'despacho' o 'instalacion'");
   }
-  if (tipo === 'instalacion') {
-    const fecha = await marcarInstalacionOficial(nv);
-    return { ok: true, fecha_llegada: fecha };
-  }
-  throw new Error("tipo debe ser 'despacho' o 'instalacion'");
+  await registrarEntregaEnViaje({ viajeId, nv, tipo, entregadoPor });
+  return r;
+}
+
+// "¿La ruta sigue según lo planificado?" - la cuadrilla confirma cuál es la
+// próxima parada (la siguiente del plan, o la que eligió si la ruta cambió)
+// y si va a hacer una pausa antes (ej. almorzar). Queda marcada en amarillo
+// en la lista y, si el aviso de WhatsApp está habilitado, se manda sumando
+// la pausa a la demora estimada.
+async function marcarEnCamino({ viajeId, nvOrigen, nvDestino, pausaMin, enviadoPor, avisar }) {
+  const paradas = await listParadasDeViaje(viajeId);
+  const destino = nvDestino
+    ? paradas.find((p) => p.tipo === 'porton' && p.nv === Number(nvDestino))
+    : await siguienteParadaPorton(viajeId, nvOrigen);
+  if (nvDestino && !destino) throw Object.assign(new Error('Esa parada no pertenece a este viaje'), { status: 404 });
+  if (!destino) return { ok: true, destino: null, aviso: null };
+
+  const pausa = Math.max(0, Math.min(600, Math.round(Number(pausaMin) || 0)));
+  await pool.query(
+    `update public.logistica_viajes
+        set en_camino_nv = $2, en_camino_pausa_min = $3, en_camino_at = now()
+      where id = $1;`,
+    [Number(viajeId), destino.nv, pausa]
+  );
+
+  const aviso = avisar
+    ? await enviarAvisoParaParada({ viajeId, parada: destino, nvOrigen: Number(nvOrigen), enviadoPor, pausaMin: pausa })
+    : null;
+  return { ok: true, destino, pausaMin: pausa, aviso };
 }
 
 // Próxima PARADA-PORTÓN de la ruta después de la actual (salta paradas
@@ -331,7 +426,7 @@ async function siguienteParadaPorton(viajeId, nvActual) {
   const idx = paradas.findIndex((p) => p.tipo === 'porton' && p.nv === Number(nvActual));
   if (idx === -1) return null;
   for (let i = idx + 1; i < paradas.length; i++) {
-    if (paradas[i].tipo === 'porton') return paradas[i];
+    if (paradas[i].tipo === 'porton' && !paradas[i].entregado) return paradas[i];
   }
   return null;
 }
@@ -408,7 +503,7 @@ async function registrarAviso({ viajeId, nvOrigen, nvDestino, telefono, resultad
 // porque la ruta cambió). `nvOrigen` es solo para el log (de qué NV se
 // viene) - en el caso de la primera parada no hay un "de dónde viene", así
 // que los callers pasan el mismo nv de destino.
-async function enviarAvisoParaParada({ viajeId, parada, nvOrigen, enviadoPor }) {
+async function enviarAvisoParaParada({ viajeId, parada, nvOrigen, enviadoPor, pausaMin = 0 }) {
   const whatsapp = require('./logisticaWhatsapp');
 
   const [nvDetalle, datos] = await Promise.all([getNvDetalle(parada.nv), datosParaAviso(viajeId)]);
@@ -424,7 +519,10 @@ async function enviarAvisoParaParada({ viajeId, parada, nvOrigen, enviadoPor }) 
   const resultado = await whatsapp.enviarAvisoEnCamino({
     telefono: telefonoDestino,
     nombreCliente: nvDetalle?.nombre_cliente,
-    horasTexto: formatearDuracionHoras(parada.horas_tramo),
+    // La pausa que informó la cuadrilla (ej. almuerzo) se suma al tramo.
+    horasTexto: formatearDuracionHoras(
+      parada.horas_tramo == null && !pausaMin ? null : Number(parada.horas_tramo || 0) + Number(pausaMin || 0) / 60
+    ),
     cuadrillaTexto: datos.cuadrillaTexto,
     vehiculoNombre: datos.vehiculoNombre,
     fotosMiembros: datos.fotosMiembros,
@@ -438,6 +536,7 @@ async function enviarAvisoParaParada({ viajeId, parada, nvOrigen, enviadoPor }) 
   return {
     ok: resultado.ok, error: resultado.error, siguienteNv: parada.nv,
     nombreCliente: nvDetalle?.nombre_cliente, horasTramo: parada.horas_tramo,
+    destinoEsPrueba: !!telefonoTest,
   };
 }
 
@@ -474,6 +573,6 @@ module.exports = {
   listQcUsersDeCuadrillas, getQcUser, cuadrillasDeUsuario,
   listViajesDeCuadrillas, getViajeCuadrilla, marcarSalidaReal, marcarLlegadaReal,
   listParadasDeViaje, getNvDetalle, crearSolicitudSt,
-  marcarEntregado, siguienteParadaPorton, primeraParadaPorton,
+  marcarEntregado, marcarEnCamino, siguienteParadaPorton, primeraParadaPorton,
   avisarPrimeraParada, avisarSiguienteParada, avisarParadaElegida, datosParaAviso,
 };

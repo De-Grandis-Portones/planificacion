@@ -52,13 +52,17 @@ async function cuadrillasDeUsuario(qcUserId) {
 // criterio que el resto de la app), cantidad de paradas totales (portones +
 // paradas extra, ej. hoteles), y hora_salida_real (botón "Play"). Switch
 // pedido por el usuario: hoy hasta 10 días corridos después inclusive, o
-// toda la programación.
+// toda la programación. En "próximos 10 días" también entran los viajes de
+// fechas anteriores que todavía no se finalizaron (sin hora_llegada_real) -
+// pedido explícito del usuario, 2026-09-29: que no desaparezcan de la
+// pantalla de la cuadrilla un viaje abierto solo porque ya pasó su fecha.
 async function listViajesDeCuadrillas(cuadrillaIds, { soloProximos10 } = {}) {
   const ids = (cuadrillaIds || []).map(Number).filter(Number.isInteger);
   if (!ids.length) return [];
 
   const filtroFecha = soloProximos10
-    ? `and vi.fecha >= current_date and vi.fecha < current_date + 10`
+    ? `and ((vi.fecha >= current_date and vi.fecha < current_date + 10)
+         or (vi.fecha < current_date and vi.hora_llegada_real is null))`
     : '';
 
   const { rows } = await pool.query(

@@ -92,6 +92,11 @@ const TICKET_CATEGORIAS = [
   'Otro',
 ];
 
+// Título libre y obligatorio, para distinguir un ticket de otro en las listas
+// (con solo la categoría se veían todos iguales). Los tickets viejos no
+// tienen: ahí se sigue mostrando la categoría.
+const MAX_TITULO = 120;
+
 const ESTADO_LABEL = { pending: 'Pendiente', in_progress: 'En curso', closed: 'Cerrado' };
 const ESTADO_COLOR = {
   pending: 'var(--state-pending, #b45309)',
@@ -104,6 +109,7 @@ export default function TicketWidget() {
   const [tab, setTab] = useState('nueva'); // 'nueva' | 'mias'
   const panelRef = useRef(null);
 
+  const [titulo, setTitulo] = useState('');
   const [categoria, setCategoria] = useState(TICKET_CATEGORIAS[0]);
   const [mensaje, setMensaje] = useState('');
   const [adjuntos, setAdjuntos] = useState([]);
@@ -231,6 +237,10 @@ export default function TicketWidget() {
 
   async function enviarNuevoTicket(e) {
     e.preventDefault();
+    if (!titulo.trim()) {
+      setErrorNueva('Poné un título antes de enviar.');
+      return;
+    }
     if (!mensaje.trim()) {
       setErrorNueva('Escribí el detalle antes de enviar.');
       return;
@@ -239,12 +249,14 @@ export default function TicketWidget() {
     setEnviando(true);
     try {
       const { data } = await createTicket({
+        titulo: titulo.trim(),
         categoria,
         mensaje: mensaje.trim(),
         rutaOrigen: window.location.pathname,
         adjuntos,
       });
       if (data?.ticket) markTicketSeen(data.ticket.id, data.ticket);
+      setTitulo('');
       setMensaje('');
       setAdjuntos([]);
       setEnviado(true);
@@ -371,6 +383,23 @@ export default function TicketWidget() {
               <form onSubmit={enviarNuevoTicket} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <div>
                   <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: 'var(--ink-weak)' }}>
+                    Título
+                  </label>
+                  <input
+                    value={titulo}
+                    onChange={(e) => setTitulo(e.target.value)}
+                    maxLength={MAX_TITULO}
+                    placeholder="Ej: No carga el remito 4521"
+                    style={{
+                      width: '100%', padding: '9px 10px', borderRadius: 10,
+                      border: '1px solid var(--border)', background: 'var(--surface)',
+                      color: 'var(--ink)', fontSize: 13,
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: 'var(--ink-weak)' }}>
                     Categoría
                   </label>
                   <select
@@ -493,7 +522,7 @@ export default function TicketWidget() {
                 <button
                   type="submit"
                   className="btn btn--brand"
-                  disabled={enviando || !mensaje.trim()}
+                  disabled={enviando || !titulo.trim() || !mensaje.trim()}
                   style={{ width: '100%', padding: '10px 12px', fontSize: 13, borderRadius: 10 }}
                 >
                   {enviando ? 'Enviando...' : 'Enviar ticket'}
@@ -534,9 +563,9 @@ export default function TicketWidget() {
                         }}
                       />
                     )}
-                    <div style={{ fontSize: 13, fontWeight: 600 }}>{t.categoria}</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, paddingRight: 12, overflowWrap: 'anywhere' }}>{t.titulo || t.categoria}</div>
                     <div style={{ fontSize: 12, color: 'var(--ink-weak)', margin: '2px 0' }}>
-                      {new Date(t.created_at).toLocaleString()}
+                      {t.titulo ? `${t.categoria} · ` : ''}{new Date(t.created_at).toLocaleString()}
                     </div>
                     <span style={{ fontSize: 11, fontWeight: 700, color: ESTADO_COLOR[t.estado] || 'var(--ink)' }}>
                       {ESTADO_LABEL[t.estado] || t.estado}
@@ -555,7 +584,10 @@ export default function TicketWidget() {
                 >
                   ← Volver
                 </button>
-                <div style={{ fontSize: 13, fontWeight: 700 }}>{ticketSeleccionado.categoria}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, overflowWrap: 'anywhere' }}>{ticketSeleccionado.titulo || ticketSeleccionado.categoria}</div>
+                {ticketSeleccionado.titulo && (
+                  <div style={{ fontSize: 12, color: 'var(--ink-weak)' }}>{ticketSeleccionado.categoria}</div>
+                )}
                 <span style={{ fontSize: 11, fontWeight: 700, color: ESTADO_COLOR[ticketSeleccionado.estado] || 'var(--ink)' }}>
                   {ESTADO_LABEL[ticketSeleccionado.estado] || ticketSeleccionado.estado}
                 </span>

@@ -219,13 +219,14 @@ export default function AdminTicketsBoardPage() {
     return [...APP_ORDER, ...clavesApartados, ...desconocidas];
   }, [tickets, apartados]);
 
-  // Buscador: filtra por categoría, mensaje, quién lo creó o quién lo está
-  // trabajando - así se puede encontrar una tarjeta puntual sin tener que
+  // Buscador: filtra por título, categoría, mensaje, quién lo creó o quién lo
+  // está trabajando - así se puede encontrar una tarjeta puntual sin tener que
   // desplazarse a mano por columnas con muchas tarjetas.
   const busquedaNormalizada = busqueda.trim().toLowerCase();
   function coincideBusqueda(t) {
     if (!busquedaNormalizada) return true;
     return (
+      String(t.titulo || '').toLowerCase().includes(busquedaNormalizada) ||
       String(t.categoria || '').toLowerCase().includes(busquedaNormalizada) ||
       String(t.mensaje || '').toLowerCase().includes(busquedaNormalizada) ||
       String(t.creado_por_nombre || '').toLowerCase().includes(busquedaNormalizada) ||
@@ -510,7 +511,14 @@ export default function AdminTicketsBoardPage() {
                     <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--ink-weak)', marginBottom: 2 }}>
                       {t.categoria}
                     </div>
-                    <div style={{ fontSize: 13, lineHeight: 1.3 }}>{primerasPalabras(t.mensaje)}</div>
+                    {t.titulo ? (
+                      <>
+                        <div style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.3, overflowWrap: 'anywhere' }}>{t.titulo}</div>
+                        <div style={{ fontSize: 12, lineHeight: 1.3, color: 'var(--ink-weak)', marginTop: 2 }}>{primerasPalabras(t.mensaje)}</div>
+                      </>
+                    ) : (
+                      <div style={{ fontSize: 13, lineHeight: 1.3 }}>{primerasPalabras(t.mensaje)}</div>
+                    )}
                     <div style={{ fontSize: 10, color: 'var(--ink-weak)', marginTop: 5 }}>
                       {nombreConUsuario(t.creado_por_nombre, t.creado_por_username) || '—'} · {new Date(t.created_at).toLocaleDateString()}
                     </div>

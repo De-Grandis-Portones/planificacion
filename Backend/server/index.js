@@ -832,6 +832,18 @@ const MIGRATIONS = [
       );
     `,
   },
+  {
+    // Título libre del ticket ("No carga el remito 4521") - pedido explícito:
+    // con solo la categoría todos los tickets se veían iguales en las listas.
+    // Obligatorio al crear un ticket desde cualquier app, pero la columna
+    // queda nullable: los tickets viejos no tienen y se sigue mostrando la
+    // categoría. Las tareas del tablero tampoco lo usan (su categoría ya es
+    // el texto de la tarea). Misma columna para las 6 apps (tabla compartida).
+    name: 'tickets_titulo',
+    sql: `
+      ALTER TABLE public.tickets ADD COLUMN IF NOT EXISTS titulo TEXT;
+    `,
+  },
 ];
 
 async function runMigrations() {

@@ -171,10 +171,10 @@ export default function AdminTicketDetailModal({ ticketId, onClose, onTicketChan
       open={!!ticketId}
       onClose={onClose}
       wide
-      title={ticket?.categoria}
+      title={ticket?.titulo || ticket?.categoria}
       subtitle={
         ticket
-          ? `${APP_LABEL[ticket.app_origen] || ticket.app_origen || ''} · Creado por ${nombreConUsuario(ticket.creado_por_nombre, ticket.creado_por_username) || '—'} · ${new Date(ticket.created_at).toLocaleString()}`
+          ? `${ticket.titulo ? `${ticket.categoria} · ` : ''}${APP_LABEL[ticket.app_origen] || ticket.app_origen || ''} · Creado por ${nombreConUsuario(ticket.creado_por_nombre, ticket.creado_por_username) || '—'} · ${new Date(ticket.created_at).toLocaleString()}`
           : ''
       }
     >

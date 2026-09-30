@@ -13,8 +13,8 @@ import {
   fetchParadasDespachoV2, fetchNvDespachoV2, fetchNvAdjuntosDespachoV2, crearSolicitudStDespachoV2,
   fetchNvMedicionMediaDespachoV2, fetchMedicionMediaItemDespachoV2,
   fetchRemitosPorNv, getDespachoV2Token, getDespachoV2User, setDespachoV2Session, clearDespachoV2Session,
-  marcarEntregadoDespachoV2, avisarSiguienteDespachoV2,
-  fetchParadasRestantesDespachoV2, avisarParadaElegidaDespachoV2,
+  marcarEntregadoDespachoV2, enCaminoDespachoV2,
+  fetchParadasRestantesDespachoV2,
   fetchGastosDespachoV2, crearGastoDespachoV2, actualizarGastoDespachoV2, deleteGastoDespachoV2,
   fetchChecklistDespachoV2,
   API_BASE_URL,
@@ -182,72 +182,96 @@ function LoginScreen({ onLogueado }) {
 }
 
 // ===========================================================================
-// PIN de calidad (solo para el cierre de despacho - reusa el mismo QC/PIN
-// que ya usa /despacho, ver Backend lib/despachoV2Db.js marcarDespachoOficial).
+// Después de marcar una entrega/instalación: "¿La ruta sigue según lo
+// planificado?" + "¿Van a hacer una pausa?" (pedido explícito del usuario,
+// 2026-09-29). Con "Sí" la siguiente parada del plan queda en camino
+// (amarillo en la lista); con "No" se elige cuál sigue. La pausa (ej.
+// almuerzo) se suma a la demora del aviso de WhatsApp de esa parada.
 // ===========================================================================
-function PinSheet({ busy, error, onCancelar, onConfirmar }) {
-  const [pin, setPin] = useState('');
+const PAUSAS_RAPIDAS = [0, 30, 60];
+
+function PausaSelector({ pausaMin, onCambio, busy }) {
+  const [otra, setOtra] = useState(() => (PAUSAS_RAPIDAS.includes(pausaMin) ? '' : String(pausaMin || '')));
+  const esOtra = !PAUSAS_RAPIDAS.includes(pausaMin);
+  const chip = (activo) => ({
+    flex: 1, padding: '10px 4px', borderRadius: 10, fontWeight: 800, fontSize: 13, cursor: 'pointer',
+    border: `1px solid ${activo ? BRAND : '#d1d5db'}`, background: activo ? BRAND : '#fff', color: activo ? '#fff' : '#111',
+  });
   return (
-    <div style={{ ...s.overlay, zIndex: 10000 }} onMouseDown={(e) => { if (e.target === e.currentTarget) onCancelar(); }}>
-      <div style={{ ...s.hoja, maxWidth: 360 }}>
-        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
-          <div style={{ fontWeight: 900, fontSize: 18 }}>Confirmá tu PIN</div>
-          <button type="button" onClick={onCancelar} style={{ marginLeft: 'auto', background: 'none', border: 'none', fontSize: 22, lineHeight: 1, padding: 4 }}>✕</button>
-        </div>
-        <div style={{ fontSize: 13, opacity: 0.75, marginBottom: 10 }}>
-          Es el mismo PIN de calidad que ya usás para autorizar el despacho.
-        </div>
-        <input
-          type="password" inputMode="numeric" autoFocus value={pin}
-          onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 10))}
-          onKeyDown={(e) => e.key === 'Enter' && pin.length >= 3 && onConfirmar(pin)}
-          style={{ ...s.input, textAlign: 'center', fontSize: 26, letterSpacing: 6, padding: '14px', marginBottom: 10 }}
-          placeholder="••••"
-        />
-        {error ? <div style={{ color: 'crimson', fontWeight: 700, fontSize: 13, marginBottom: 10 }}>{error}</div> : null}
-        <button type="button" style={s.botonPrimario} disabled={busy || pin.length < 3} onClick={() => onConfirmar(pin)}>
-          {busy ? 'Confirmando…' : 'Confirmar despacho'}
-        </button>
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 8 }}>¿Van a hacer una pausa antes? (ej. almorzar)</div>
+      <div style={{ display: 'flex', gap: 6 }}>
+        {PAUSAS_RAPIDAS.map((m) => (
+          <button key={m} type="button" disabled={busy} style={chip(pausaMin === m)} onClick={() => { setOtra(''); onCambio(m); }}>
+            {m === 0 ? 'Sin pausa' : `${m} min`}
+          </button>
+        ))}
+        <button type="button" disabled={busy} style={chip(esOtra)} onClick={() => onCambio(Number(otra) || 15)}>Otra</button>
       </div>
+      {esOtra ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+          <input
+            type="number" inputMode="numeric" min={1} max={600} value={otra || String(pausaMin)} disabled={busy}
+            onChange={(e) => { setOtra(e.target.value); onCambio(Math.max(1, Math.min(600, Number(e.target.value) || 0))); }}
+            style={{ ...s.input, padding: 8, width: 100 }}
+          />
+          <span style={{ fontSize: 13, opacity: 0.75 }}>minutos</span>
+        </div>
+      ) : null}
     </div>
   );
 }
 
-// ===========================================================================
-// "¿La ruta sigue como estaba?" - se pregunta SIEMPRE antes de avisar por
-// WhatsApp a la siguiente parada (pedido explícito del usuario: a veces se
-// altera en el viaje y no hay que avisarle a quien ya no sigue).
-// ===========================================================================
-function ConfirmarRutaSheet({ siguienteParada, busy, resultado, onSi, onNo, onCerrar }) {
+function textoPausa(min) {
+  return min ? ` + ${min} min de pausa` : '';
+}
+
+function ResultadoEnCamino({ resultado, onCerrar }) {
+  const aviso = resultado?.aviso;
   return (
-    <div style={{ ...s.overlay, zIndex: 10000 }} onMouseDown={(e) => { if (e.target === e.currentTarget) onCerrar(); }}>
+    <>
+      <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 10, textAlign: 'center' }}>
+        {resultado.ok ? '🚚 Próxima parada en camino' : '⚠️ No se pudo guardar'}
+      </div>
+      <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 16, textAlign: 'center' }}>
+        {!resultado.ok
+          ? (resultado.error || 'Error desconocido')
+          : !resultado.destino
+            ? 'No quedan más paradas por entregar en este viaje.'
+            : `NV ${resultado.destino.nv} · ${resultado.destino.nombre_cliente || 'Cliente sin nombre'} quedó marcado en camino${textoPausa(resultado.pausaMin)}.`}
+        {resultado.ok && aviso ? (
+          <div style={{ marginTop: 8, fontWeight: 700 }}>
+            {aviso.ok
+              ? (aviso.destinoEsPrueba ? '✅ Aviso enviado por WhatsApp a logística.' : `✅ Aviso enviado por WhatsApp a ${aviso.nombreCliente || 'el cliente'}.`)
+              : `⚠️ No se pudo mandar el aviso: ${aviso.error || 'error desconocido'}`}
+          </div>
+        ) : null}
+      </div>
+      <button type="button" style={s.botonPrimario} onClick={onCerrar}>Listo</button>
+    </>
+  );
+}
+
+function ConfirmarRutaSheet({ siguienteParada, busy, resultado, pausaMin, onPausa, onSi, onNo, onCerrar }) {
+  return (
+    <div style={{ ...s.overlay, zIndex: 10000 }} onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onCerrar(); }}>
       <div style={{ ...s.hoja, maxWidth: 400 }}>
         {resultado ? (
-          <>
-            <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 14, textAlign: 'center' }}>
-              {resultado.ok ? '✅ Aviso enviado' : '⚠️ No se pudo avisar'}
-            </div>
-            <div style={{ fontSize: 13, opacity: 0.8, marginBottom: 16, textAlign: 'center' }}>
-              {resultado.ok
-                ? `Le avisamos a ${resultado.nombreCliente || 'el próximo cliente'} por WhatsApp.`
-                : (resultado.error || 'Error desconocido')}
-            </div>
-            <button type="button" style={s.botonPrimario} onClick={onCerrar}>Listo</button>
-          </>
+          <ResultadoEnCamino resultado={resultado} onCerrar={onCerrar} />
         ) : siguienteParada ? (
           <>
-            <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 10, textAlign: 'center' }}>¿La ruta sigue como estaba?</div>
-            <div style={{ fontSize: 13, opacity: 0.8, marginBottom: 14, textAlign: 'center' }}>
-              A veces se altera en el viaje - si cambió, no confirmes acá: avisale manualmente desde el NV que corresponda.
-            </div>
-            <div style={{ background: '#f3f4f6', borderRadius: 10, padding: 12, marginBottom: 16 }}>
-              <div style={{ fontSize: 11, opacity: 0.6, fontWeight: 700, textTransform: 'uppercase' }}>Próxima parada</div>
+            <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 12, textAlign: 'center' }}>¿La ruta sigue según lo planificado?</div>
+            <div style={{ background: '#fef9c3', border: '1px solid #facc15', borderRadius: 10, padding: 12, marginBottom: 16 }}>
+              <div style={{ fontSize: 11, opacity: 0.6, fontWeight: 700, textTransform: 'uppercase' }}>Próxima parada según el plan</div>
               <div style={{ fontSize: 16, fontWeight: 900 }}>NV {siguienteParada.nv} · {siguienteParada.nombre_cliente || 'Cliente sin nombre'}</div>
-              <div style={{ fontSize: 13, opacity: 0.75 }}>Llegando en aproximadamente {formatearDuracion(siguienteParada.horas_tramo)}</div>
+              <div style={{ fontSize: 13, opacity: 0.75 }}>
+                Llegando en aproximadamente {formatearDuracion(siguienteParada.horas_tramo)}{textoPausa(pausaMin)}
+              </div>
             </div>
+            <PausaSelector pausaMin={pausaMin} onCambio={onPausa} busy={busy} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <button type="button" style={s.botonPrimario} disabled={busy} onClick={onSi}>
-                {busy ? 'Avisando…' : 'Sí, avisarle por WhatsApp'}
+                {busy ? 'Guardando…' : 'Sí, sigue así'}
               </button>
               <button type="button" style={s.botonBloque} disabled={busy} onClick={onNo}>
                 No, la ruta cambió
@@ -257,7 +281,7 @@ function ConfirmarRutaSheet({ siguienteParada, busy, resultado, onSi, onNo, onCe
         ) : (
           <>
             <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 14, textAlign: 'center' }}>✅ Listo</div>
-            <div style={{ fontSize: 13, opacity: 0.75, marginBottom: 16, textAlign: 'center' }}>Era la última parada de esta ruta.</div>
+            <div style={{ fontSize: 13, opacity: 0.75, marginBottom: 16, textAlign: 'center' }}>No quedan más paradas por entregar en esta ruta.</div>
             <button type="button" style={s.botonPrimario} onClick={onCerrar}>Listo</button>
           </>
         )}
@@ -266,11 +290,10 @@ function ConfirmarRutaSheet({ siguienteParada, busy, resultado, onSi, onNo, onCe
   );
 }
 
-// "La ruta cambió, ¿cuál sigue?" - se abre desde el "No" de ConfirmarRutaSheet
-// (pedido explícito del usuario). Lista las paradas-portón que quedaban
-// después de la actual en el orden original armado por el sistema; al
-// elegir una, manda el aviso para ESA parada puntual.
-function ElegirParadaSheet({ viajeId, nvOrigen, busy, resultado, onElegir, onCerrar }) {
+// "La ruta cambió, ¿cuál sigue?" - se abre desde el "No" de ConfirmarRutaSheet.
+// Lista las paradas-portón que faltan entregar; la elegida queda en camino
+// (con la misma pausa que ya eligieron).
+function ElegirParadaSheet({ viajeId, nvOrigen, busy, resultado, pausaMin, onElegir, onCerrar }) {
   const [paradas, setParadas] = useState(null);
   const [err, setErr] = useState('');
 
@@ -282,31 +305,21 @@ function ElegirParadaSheet({ viajeId, nvOrigen, busy, resultado, onElegir, onCer
   }, [viajeId, nvOrigen, resultado]);
 
   return (
-    <div style={{ ...s.overlay, zIndex: 10000 }} onMouseDown={(e) => { if (e.target === e.currentTarget) onCerrar(); }}>
+    <div style={{ ...s.overlay, zIndex: 10000 }} onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onCerrar(); }}>
       <div style={{ ...s.hoja, maxWidth: 400 }}>
         {resultado ? (
-          <>
-            <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 14, textAlign: 'center' }}>
-              {resultado.ok ? '✅ Aviso enviado' : '⚠️ No se pudo avisar'}
-            </div>
-            <div style={{ fontSize: 13, opacity: 0.8, marginBottom: 16, textAlign: 'center' }}>
-              {resultado.ok
-                ? `Le avisamos a ${resultado.nombreCliente || 'el cliente elegido'} por WhatsApp.`
-                : (resultado.error || 'Error desconocido')}
-            </div>
-            <button type="button" style={s.botonPrimario} onClick={onCerrar}>Listo</button>
-          </>
+          <ResultadoEnCamino resultado={resultado} onCerrar={onCerrar} />
         ) : (
           <>
             <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 10, textAlign: 'center' }}>¿Cuál es la próxima parada?</div>
             <div style={{ fontSize: 13, opacity: 0.8, marginBottom: 14, textAlign: 'center' }}>
-              Elegí a cuál de las paradas que quedan le avisamos que está en camino.
+              Elegí a cuál de las paradas que faltan van ahora{textoPausa(pausaMin)}.
             </div>
             {err ? <div style={{ color: 'crimson', fontWeight: 700, fontSize: 13, marginBottom: 10 }}>{err}</div> : null}
             {paradas == null ? (
               <div style={{ textAlign: 'center', opacity: 0.7, marginBottom: 12 }}>Cargando…</div>
             ) : paradas.length === 0 ? (
-              <div style={{ textAlign: 'center', opacity: 0.7, marginBottom: 12 }}>No quedan más paradas en esta ruta.</div>
+              <div style={{ textAlign: 'center', opacity: 0.7, marginBottom: 12 }}>No quedan más paradas por entregar en esta ruta.</div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
                 {paradas.map((p) => (
@@ -316,7 +329,7 @@ function ElegirParadaSheet({ viajeId, nvOrigen, busy, resultado, onElegir, onCer
                   >
                     <div style={{ fontWeight: 900 }}>NV {p.nv} · {p.nombre_cliente || 'Cliente sin nombre'}</div>
                     <div style={{ fontSize: 12, opacity: 0.7 }}>
-                      {[p.distribuidor, p.localidad].filter(Boolean).join(' · ') || '—'} · llegando en aproximadamente {formatearDuracion(p.horas_tramo)}
+                      {[p.distribuidor, p.localidad].filter(Boolean).join(' · ') || '—'}
                     </div>
                   </button>
                 ))}
@@ -333,46 +346,34 @@ function ElegirParadaSheet({ viajeId, nvOrigen, busy, resultado, onElegir, onCer
 }
 
 // ===========================================================================
-// "Marcar entregado/instalado" - cierre OFICIAL real: despacho pide PIN
-// (mismo mecanismo que /despacho), instalación no (no existe ese mecanismo
-// hoy para ese campo, ver Backend lib/despachoV2Db.js). Al terminar, ofrece
-// avisar por WhatsApp a la siguiente parada de la ruta - pero antes SIEMPRE
-// pregunta si la ruta sigue igual.
+// "Marcar entregado/instalado" - cierre OFICIAL real: despacho queda a
+// nombre del usuario logueado (ya entró con su PIN, no se le vuelve a pedir),
+// instalación marca la fecha de llegada (ver Backend lib/despachoV2Db.js).
+// Al terminar SIEMPRE pregunta si la ruta sigue según lo planificado y si
+// van a hacer una pausa (ver ConfirmarRutaSheet). Los problemas de una
+// instalación se reportan desde el botón de servicio técnico del NV.
 // ===========================================================================
 function MarcarEntregadoSection({ nv, viaje, parada, onParadaCambiada, stAbierta }) {
   const [tiposPendientes, setTiposPendientes] = useState(() => parada?.tipos_pendientes || []);
-  const [pinAbierto, setPinAbierto] = useState(false);
   const [marcando, setMarcando] = useState(false);
   const [err, setErr] = useState('');
   const [confirmarRuta, setConfirmarRuta] = useState(null); // { siguienteParada } | null
-  const [resultadoAviso, setResultadoAviso] = useState(null);
+  const [resultado, setResultado] = useState(null);
   const [eligiendoParada, setEligiendoParada] = useState(false); // "la ruta cambió" -> picker
-  // "¿Quedó todo bien o hubo un problema?" - paso intermedio al cerrar la
-  // instalación (pedido explícito del usuario). Si hubo un problema, se
-  // exige cargar la solicitud de ST/PV ANTES de cerrar la instalación (así
-  // nunca queda "cerrada en silencio" sin que el problema quede registrado
-  // en algún lado) - recién al enviarla con éxito se llama confirmarMarcado.
-  const [preguntandoInstalacion, setPreguntandoInstalacion] = useState(false);
-  const [mostrarStCierre, setMostrarStCierre] = useState(false);
-  const [stAbiertaLocal, setStAbiertaLocal] = useState(null);
+  const [pausaMin, setPausaMin] = useState(0);
 
   if (!parada) return null;
 
-  const cerrarTodo = () => { setConfirmarRuta(null); setResultadoAviso(null); setEligiendoParada(false); };
+  const cerrarTodo = () => { setConfirmarRuta(null); setResultado(null); setEligiendoParada(false); setPausaMin(0); };
 
-  const confirmarMarcado = async (tipo, pin) => {
+  const confirmarMarcado = async (tipo) => {
     setMarcando(true);
     setErr('');
     try {
-      const r = await marcarEntregadoDespachoV2(viaje.id, nv, { tipo, pin });
+      const r = await marcarEntregadoDespachoV2(viaje.id, nv, { tipo });
       setTiposPendientes((prev) => prev.filter((t) => t !== tipo));
-      setPinAbierto(false);
       onParadaCambiada?.();
-      // Aviso de WhatsApp apagado por ahora (WHATSAPP_AVISO_HABILITADO) - la
-      // cuadrilla sigue avisando manual desde su propio WhatsApp, sin popup.
-      if (r?.whatsappAvisoHabilitado) {
-        setConfirmarRuta({ siguienteParada: r?.siguienteParada || null });
-      }
+      setConfirmarRuta({ siguienteParada: r?.siguienteParada || null });
     } catch (e) {
       setErr(e?.response?.data?.error || e.message);
     } finally {
@@ -380,52 +381,67 @@ function MarcarEntregadoSection({ nv, viaje, parada, onParadaCambiada, stAbierta
     }
   };
 
-  const avisar = async () => {
+  const marcarEnCamino = async (nvDestino) => {
     setMarcando(true);
     try {
-      const r = await avisarSiguienteDespachoV2(viaje.id, nv);
-      setResultadoAviso(r);
+      const r = await enCaminoDespachoV2(viaje.id, nv, { nvDestino, pausaMin });
+      setResultado(r);
+      onParadaCambiada?.();
     } catch (e) {
-      setResultadoAviso({ ok: false, error: e?.response?.data?.error || e.message });
+      setResultado({ ok: false, error: e?.response?.data?.error || e.message });
     } finally {
       setMarcando(false);
     }
   };
 
-  const avisarElegida = async (nvDestino) => {
-    setMarcando(true);
-    try {
-      const r = await avisarParadaElegidaDespachoV2(viaje.id, nv, nvDestino);
-      setResultadoAviso(r);
-    } catch (e) {
-      setResultadoAviso({ ok: false, error: e?.response?.data?.error || e.message });
-    } finally {
-      setMarcando(false);
-    }
-  };
+  const hojas = (
+    <>
+      {confirmarRuta && !eligiendoParada ? (
+        <ConfirmarRutaSheet
+          siguienteParada={confirmarRuta.siguienteParada}
+          busy={marcando}
+          resultado={resultado}
+          pausaMin={pausaMin}
+          onPausa={setPausaMin}
+          onSi={() => marcarEnCamino(null)}
+          onNo={() => setEligiendoParada(true)}
+          onCerrar={cerrarTodo}
+        />
+      ) : null}
+      {eligiendoParada ? (
+        <ElegirParadaSheet
+          viajeId={viaje.id}
+          nvOrigen={nv}
+          busy={marcando}
+          resultado={resultado}
+          pausaMin={pausaMin}
+          onElegir={marcarEnCamino}
+          onCerrar={cerrarTodo}
+        />
+      ) : null}
+    </>
+  );
 
-  const alEnviarStDeCierre = (solicitud) => {
-    setMostrarStCierre(false);
-    setStAbiertaLocal(solicitud || null);
-    confirmarMarcado('instalacion', null);
-  };
-
-  const stVisible = stAbiertaLocal || stAbierta;
-
+  // Ya no queda nada por cerrar en esta parada: igual se renderizan las hojas
+  // (la pregunta de la ruta aparece justo después de cerrar la última).
   if (!tiposPendientes.length) {
-    if (!stVisible) return null;
     return (
-      <div style={{ ...s.card, marginBottom: 16, background: '#fffbeb', border: '1px solid #fde68a' }}>
-        <div style={{ fontWeight: 900, fontSize: 15, textAlign: 'center' }}>✅ Instalación terminada</div>
-        <div style={{ fontWeight: 800, color: '#b45309', fontSize: 13, textAlign: 'center', marginTop: 2 }}>
-          ⚠️ Con problema reportado (pendiente)
-        </div>
-        {stVisible.descripcion ? (
-          <div style={{ background: '#fff', borderRadius: 10, padding: 10, marginTop: 10, fontSize: 13, opacity: 0.85 }}>
-            {stVisible.descripcion}
+      <>
+        {stAbierta ? (
+          <div style={{ ...s.card, marginBottom: 16, background: '#fffbeb', border: '1px solid #fde68a' }}>
+            <div style={{ fontWeight: 900, fontSize: 15, textAlign: 'center' }}>✅ Instalación terminada</div>
+            <div style={{ fontWeight: 800, color: '#b45309', fontSize: 13, textAlign: 'center', marginTop: 2 }}>
+              ⚠️ Con problema reportado (pendiente)
+            </div>
+            {stAbierta.descripcion ? (
+              <div style={{ background: '#fff', borderRadius: 10, padding: 10, marginTop: 10, fontSize: 13, opacity: 0.85 }}>
+                {stAbierta.descripcion}
+              </div>
+            ) : null}
           </div>
         ) : null}
-      </div>
+        {hojas}
+      </>
     );
   }
 
@@ -433,68 +449,30 @@ function MarcarEntregadoSection({ nv, viaje, parada, onParadaCambiada, stAbierta
     <div style={{ marginBottom: 16 }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {tiposPendientes.includes('despacho') ? (
-          <button type="button" style={s.botonPrimario} disabled={marcando} onClick={() => { setErr(''); setPinAbierto(true); }}>
-            ✅ Marcar despacho entregado
+          <button
+            type="button" style={s.botonPrimario} disabled={marcando}
+            onClick={() => {
+              if (!window.confirm(`¿Confirmás que entregaste el NV ${nv}? Queda registrado a tu nombre.`)) return;
+              confirmarMarcado('despacho');
+            }}
+          >
+            {marcando ? 'Marcando…' : '✅ Marcar despacho entregado'}
           </button>
         ) : null}
         {tiposPendientes.includes('instalacion') ? (
-          preguntandoInstalacion ? (
-            <div style={{ ...s.card, display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <div style={{ fontWeight: 800, fontSize: 15, textAlign: 'center', marginBottom: 2 }}>
-                ¿Quedó todo bien o hubo algún problema?
-              </div>
-              <button type="button" style={{ ...s.botonPrimario, background: '#16a34a' }} disabled={marcando} onClick={() => confirmarMarcado('instalacion', null)}>
-                {marcando ? 'Marcando…' : '✅ Todo bien'}
-              </button>
-              <button type="button" style={{ ...s.botonPrimario, background: '#d97706' }} disabled={marcando} onClick={() => { setPreguntandoInstalacion(false); setMostrarStCierre(true); }}>
-                ⚠️ Hubo un problema
-              </button>
-              <button type="button" style={{ background: 'none', border: 'none', color: '#6b7280', fontSize: 13, fontWeight: 700, padding: 2 }} disabled={marcando} onClick={() => setPreguntandoInstalacion(false)}>
-                Cancelar
-              </button>
-            </div>
-          ) : (
-            <button type="button" style={s.botonPrimario} disabled={marcando} onClick={() => setPreguntandoInstalacion(true)}>
-              ✅ Marcar instalación terminada
-            </button>
-          )
+          <button
+            type="button" style={s.botonPrimario} disabled={marcando}
+            onClick={() => {
+              if (!window.confirm(`¿Confirmás que terminaste la instalación del NV ${nv}?`)) return;
+              confirmarMarcado('instalacion');
+            }}
+          >
+            {marcando ? 'Marcando…' : '✅ Marcar instalación terminada'}
+          </button>
         ) : null}
       </div>
       {err ? <div style={{ color: 'crimson', fontWeight: 700, fontSize: 13, marginTop: 8 }}>{err}</div> : null}
-
-      {pinAbierto ? (
-        <PinSheet
-          busy={marcando} error={err}
-          onCancelar={() => { setPinAbierto(false); setErr(''); }}
-          onConfirmar={(pin) => confirmarMarcado('despacho', pin)}
-        />
-      ) : null}
-
-      {confirmarRuta && !eligiendoParada ? (
-        <ConfirmarRutaSheet
-          siguienteParada={confirmarRuta.siguienteParada}
-          busy={marcando}
-          resultado={resultadoAviso}
-          onSi={avisar}
-          onNo={() => setEligiendoParada(true)}
-          onCerrar={cerrarTodo}
-        />
-      ) : null}
-
-      {eligiendoParada ? (
-        <ElegirParadaSheet
-          viajeId={viaje.id}
-          nvOrigen={nv}
-          busy={marcando}
-          resultado={resultadoAviso}
-          onElegir={avisarElegida}
-          onCerrar={cerrarTodo}
-        />
-      ) : null}
-
-      {mostrarStCierre ? (
-        <StFormSheet nv={nv} onClose={() => setMostrarStCierre(false)} onEnviada={alEnviarStDeCierre} />
-      ) : null}
+      {hojas}
     </div>
   );
 }
@@ -801,13 +779,14 @@ function montoLegible(n) {
 // (campos_inciertos), se puede corregir ahí mismo con un tap (pedido
 // explícito del usuario). Corregir NO le saca el resaltado a logística -
 // sigue viendo estado_revision='revisar' aunque se arregle acá.
-function GastoRow({ gasto, viajeId, onCambio, onBorrar }) {
+function GastoRow({ gasto, viajeId, onCambio, onBorrar, bloqueado }) {
   const [editando, setEditando] = useState(null); // 'fecha'|'motivo'|'monto'|'tipo_comprobante'|null
   const [valor, setValor] = useState('');
   const [guardando, setGuardando] = useState(false);
   const incierto = (campo) => (gasto.campos_inciertos || []).includes(campo);
 
   const abrirEdicion = (campo, valorActual) => {
+    if (bloqueado) return;
     setEditando(campo);
     setValor(String(valorActual ?? ''));
   };
@@ -825,7 +804,7 @@ function GastoRow({ gasto, viajeId, onCambio, onBorrar }) {
   };
 
   const campoStyle = (campo) => ({
-    cursor: 'pointer',
+    cursor: bloqueado ? 'default' : 'pointer',
     ...(incierto(campo) ? { color: '#b45309', textDecoration: 'underline dotted', fontWeight: 800 } : {}),
   });
 
@@ -873,7 +852,9 @@ function GastoRow({ gasto, viajeId, onCambio, onBorrar }) {
         <a href={gasto.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 18, textDecoration: 'none' }} title="Ver ticket">
           {String(gasto.tipo_mime || '').startsWith('image/') ? '🖼️' : '📄'}
         </a>
-        <button type="button" onClick={() => onBorrar(gasto.id)} style={{ background: 'none', border: 'none', color: '#991b1b', fontSize: 16, cursor: 'pointer', padding: 4 }}>🗑️</button>
+        {!bloqueado ? (
+          <button type="button" onClick={() => onBorrar(gasto.id)} style={{ background: 'none', border: 'none', color: '#991b1b', fontSize: 16, cursor: 'pointer', padding: 4 }}>🗑️</button>
+        ) : null}
       </div>
     </div>
   );
@@ -890,6 +871,8 @@ function GastosSheet({ viaje, onClose }) {
   useEffect(cargar, [viaje.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const total = (gastos || []).reduce((acc, g) => acc + Number(g.monto), 0);
+  // Rendición aprobada por logística = gastos congelados (el backend también lo bloquea).
+  const bloqueado = !!viaje.rendicion_aprobada_at;
 
   const onArchivoElegido = async (e) => {
     const f = e.target.files?.[0];
@@ -930,10 +913,16 @@ function GastosSheet({ viaje, onClose }) {
           Si algo queda subrayado en naranja, tocalo para corregirlo.
         </div>
 
-        <label style={{ ...s.botonPrimario, display: 'block', textAlign: 'center', marginBottom: 16 }}>
-          {subiendo ? 'Leyendo el comprobante…' : '📷 Agregar gasto (foto o PDF)'}
-          <input type="file" accept="image/*,application/pdf" style={{ display: 'none' }} disabled={subiendo} onChange={onArchivoElegido} />
-        </label>
+        {bloqueado ? (
+          <div style={{ background: '#f0fdf4', color: '#15803d', border: '1px solid #86efac', borderRadius: 10, padding: 10, fontWeight: 800, fontSize: 13, marginBottom: 16 }}>
+            ✅ Logística ya aprobó la rendición de este viaje: los gastos no se pueden agregar ni modificar.
+          </div>
+        ) : (
+          <label style={{ ...s.botonPrimario, display: 'block', textAlign: 'center', marginBottom: 16 }}>
+            {subiendo ? 'Leyendo el comprobante…' : '📷 Agregar gasto (foto o PDF)'}
+            <input type="file" accept="image/*,application/pdf" style={{ display: 'none' }} disabled={subiendo} onChange={onArchivoElegido} />
+          </label>
+        )}
         {err ? <div style={{ color: 'crimson', fontWeight: 700, fontSize: 13, marginBottom: 10 }}>{err}</div> : null}
 
         <div style={{ fontWeight: 900, fontSize: 14, marginBottom: 6 }}>Gastos cargados</div>
@@ -944,7 +933,7 @@ function GastosSheet({ viaje, onClose }) {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
             {gastos.map((g) => (
-              <GastoRow key={g.id} gasto={g} viajeId={viaje.id} onCambio={cargar} onBorrar={borrar} />
+              <GastoRow key={g.id} gasto={g} viajeId={viaje.id} onCambio={cargar} onBorrar={borrar} bloqueado={bloqueado} />
             ))}
           </div>
         )}
@@ -973,14 +962,26 @@ function ParadaRow({ parada, viaje, onAbrirNv, onAbrirExtra }) {
       </div>
     );
   }
-  const label = parada.tipos_pendientes.length === 2 ? 'Desp. + Inst.' : parada.tipos_pendientes[0] === 'despacho' ? 'Despacho' : 'Instalación';
+  const tipos = parada.tipos || parada.tipos_pendientes || [];
+  const label = tipos.length === 2 ? 'Desp. + Inst.' : tipos[0] === 'despacho' ? 'Despacho' : 'Instalación';
+  // Pedido explícito del usuario: entregado = rojo, próxima parada
+  // confirmada ("en camino") = amarillo, el resto sin color.
+  const fondo = parada.entregado
+    ? { background: '#fee2e2', borderLeft: '4px solid #dc2626' }
+    : parada.en_camino
+      ? { background: '#fef9c3', borderLeft: '4px solid #eab308' }
+      : {};
   return (
     <div
       onClick={() => onAbrirNv({ nv: parada.nv, viaje, parada })}
-      style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '10px 8px', borderBottom: '1px solid #f0f0f0', cursor: 'pointer' }}
+      style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '10px 8px', borderBottom: '1px solid #f0f0f0', cursor: 'pointer', ...fondo }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-        <div style={{ fontWeight: 900, fontSize: 14 }}>NV {parada.nv}</div>
+        <div style={{ fontWeight: 900, fontSize: 14 }}>
+          NV {parada.nv}
+          {parada.entregado ? <span style={{ marginLeft: 6, fontSize: 11, color: '#b91c1c' }}>✅ Entregado</span> : null}
+          {parada.en_camino ? <span style={{ marginLeft: 6, fontSize: 11, color: '#a16207' }}>🚚 En camino</span> : null}
+        </div>
         <div style={{ fontSize: 10, fontWeight: 800, padding: '2px 7px', borderRadius: 999, background: '#eef2ff', color: '#3730a3' }}>{label}</div>
       </div>
       <div style={{ fontSize: 13, opacity: 0.85 }}>{parada.nombre_cliente || 'Cliente sin nombre'}</div>

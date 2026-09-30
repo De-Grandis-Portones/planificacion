@@ -86,6 +86,16 @@ async function requireViajeDeMiCuadrilla(req, res, viajeId) {
   return viaje;
 }
 
+// Con la rendición ya aprobada por logística los gastos quedan congelados -
+// pedido explícito del usuario: con el viaje finalizado se puede seguir
+// cargando (la hora de llegada queda fija, los tickets traen su propia
+// fecha), pero una vez aprobada ya no se agrega, edita ni borra nada.
+function rendicionCerrada(res, viaje) {
+  if (!viaje.rendicion_aprobada_at) return false;
+  res.status(409).json({ error: 'La rendición de este viaje ya fue aprobada por logística: no se pueden cargar ni modificar gastos.' });
+  return true;
+}
+
 // GET /despacho-v2/viajes?rango=10d|todos
 router.get('/despacho-v2/viajes', asyncRoute(async (req, res) => {
   const cuadrillas = await db.cuadrillasDeUsuario(req.despachoUser.qc_user_id);
@@ -183,8 +193,9 @@ router.get('/despacho-v2/nv/:nv/medicion-media/:index', asyncRoute(async (req, r
   res.json({ ok: true, item });
 }));
 
-// POST /despacho-v2/viajes/:id/nv/:nv/marcar-entregado { tipo, pin? } -
-// cierre OFICIAL real (despacho: mismo PIN/QC que /despacho; instalación:
+// POST /despacho-v2/viajes/:id/nv/:nv/marcar-entregado { tipo } -
+// cierre OFICIAL real (despacho: mismo QC que /despacho, a nombre del
+// usuario logueado - sin volver a pedir PIN; instalación:
 // pone fecha_llegada_imput como ya hace /a, sin PIN porque no hay ninguno
 // hoy para ese campo). Devuelve la SIGUIENTE parada de la ruta para que el
 // frontend le pregunte al usuario "¿la ruta sigue así?" ANTES de mandar
@@ -192,9 +203,32 @@ router.get('/despacho-v2/nv/:nv/medicion-media/:index', asyncRoute(async (req, r
 router.post('/despacho-v2/viajes/:id/nv/:nv/marcar-entregado', asyncRoute(async (req, res) => {
   if (!(await requireViajeDeMiCuadrilla(req, res, req.params.id))) return;
   const tipo = String(req.body?.tipo || '').trim();
-  await db.marcarEntregado({ nv: req.params.nv, tipo, pin: req.body?.pin });
-  const siguiente = WHATSAPP_AVISO_HABILITADO ? await db.siguienteParadaPorton(req.params.id, req.params.nv) : null;
+  await db.marcarEntregado({
+    viajeId: req.params.id, nv: req.params.nv, tipo,
+    qcUserId: req.despachoUser.qc_user_id, entregadoPor: req.despachoUser.name,
+  });
+  // La siguiente parada se devuelve SIEMPRE (no solo con WhatsApp prendido):
+  // la cuadrilla confirma "¿la ruta sigue según lo planificado?" + pausa
+  // para marcarla en camino (ver /en-camino).
+  const siguiente = await db.siguienteParadaPorton(req.params.id, req.params.nv);
   res.json({ ok: true, siguienteParada: siguiente, whatsappAvisoHabilitado: WHATSAPP_AVISO_HABILITADO });
+}));
+
+// POST /despacho-v2/viajes/:id/nv/:nv/en-camino { nvDestino?, pausaMin } -
+// después de marcar una entrega: confirma la próxima parada (sin nvDestino
+// = la siguiente del plan; con nvDestino = la ruta cambió y eligió otra) y
+// la pausa previa en minutos. Si WHATSAPP_AVISO_HABILITADO, manda el aviso
+// sumando la pausa a la demora (mientras WHATSAPP_AVISO_TELEFONO_TEST esté
+// cargado, va a ese número - hoy logística - en vez de al cliente).
+router.post('/despacho-v2/viajes/:id/nv/:nv/en-camino', asyncRoute(async (req, res) => {
+  if (!(await requireViajeDeMiCuadrilla(req, res, req.params.id))) return;
+  const resultado = await db.marcarEnCamino({
+    viajeId: req.params.id, nvOrigen: req.params.nv,
+    nvDestino: req.body?.nvDestino ? Number(req.body.nvDestino) : null,
+    pausaMin: req.body?.pausaMin, enviadoPor: req.despachoUser.name,
+    avisar: WHATSAPP_AVISO_HABILITADO,
+  });
+  res.json({ ...resultado, whatsappAvisoHabilitado: WHATSAPP_AVISO_HABILITADO });
 }));
 
 // POST /despacho-v2/viajes/:id/nv/:nv/avisar-siguiente - se llama SOLO
@@ -220,7 +254,9 @@ router.get('/despacho-v2/viajes/:id/nv/:nv/paradas-restantes', asyncRoute(async 
   if (!(await requireViajeDeMiCuadrilla(req, res, req.params.id))) return;
   const paradas = await db.listParadasDeViaje(req.params.id);
   const idx = paradas.findIndex((p) => p.tipo === 'porton' && p.nv === Number(req.params.nv));
-  const restantes = idx === -1 ? [] : paradas.slice(idx + 1).filter((p) => p.tipo === 'porton');
+  // Todas las que falta entregar (no solo las que venían después en el plan):
+  // si la ruta cambió, pueden volver a una anterior que quedó pendiente.
+  const restantes = idx === -1 ? [] : paradas.filter((p) => p.tipo === 'porton' && !p.entregado && p.nv !== Number(req.params.nv));
   res.json({ ok: true, restantes });
 }));
 
@@ -278,6 +314,7 @@ router.get('/despacho-v2/viajes/:id/gastos', asyncRoute(async (req, res) => {
 router.post('/despacho-v2/viajes/:id/gastos', uploadGasto.single('archivo'), asyncRoute(async (req, res) => {
   const viaje = await requireViajeDeMiCuadrilla(req, res, req.params.id);
   if (!viaje) return;
+  if (rendicionCerrada(res, viaje)) return;
   if (!req.file) throw new Error('Falta la foto o el PDF del ticket');
 
   const path = `gasto-viaje-${req.params.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${extensionDeGasto(req.file.originalname, req.file.mimetype)}`;
@@ -304,7 +341,9 @@ router.post('/despacho-v2/viajes/:id/gastos', uploadGasto.single('archivo'), asy
 // otro) - pedido explícito del usuario. No cambia estado_revision: sigue
 // resaltado para logística aunque se corrija acá.
 router.patch('/despacho-v2/viajes/:id/gastos/:gastoId', asyncRoute(async (req, res) => {
-  if (!(await requireViajeDeMiCuadrilla(req, res, req.params.id))) return;
+  const viaje = await requireViajeDeMiCuadrilla(req, res, req.params.id);
+  if (!viaje) return;
+  if (rendicionCerrada(res, viaje)) return;
   const gastoExistente = await gastosDb.getGasto(req.params.gastoId);
   if (!gastoExistente || Number(gastoExistente.viaje_id) !== Number(req.params.id)) return res.status(404).json({ error: 'Gasto no encontrado' });
 
@@ -320,7 +359,9 @@ router.patch('/despacho-v2/viajes/:id/gastos/:gastoId', asyncRoute(async (req, r
 }));
 
 router.delete('/despacho-v2/viajes/:id/gastos/:gastoId', asyncRoute(async (req, res) => {
-  if (!(await requireViajeDeMiCuadrilla(req, res, req.params.id))) return;
+  const viaje = await requireViajeDeMiCuadrilla(req, res, req.params.id);
+  if (!viaje) return;
+  if (rendicionCerrada(res, viaje)) return;
   const gasto = await gastosDb.getGasto(req.params.gastoId);
   if (!gasto || Number(gasto.viaje_id) !== Number(req.params.id)) return res.status(404).json({ error: 'Gasto no encontrado' });
   const path = await gastosDb.borrarGasto(req.params.gastoId);

@@ -2,6 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const { pool } = require('../../db');
 const { STATUS, low, loadStageMap, getNextStages, checkRequirements } = require('../../lib/workflow');
+const { esTokenInterno } = require('../../lib/qcTokenInterno');
 
 const router = express.Router();
 
@@ -330,6 +331,10 @@ router.get('/qc/history/:line/:itemId', async (req, res) => {
 
 router.post('/qc/authorize', async (req, res) => {
   const { line, item_id, stage_key, qc_status, motive_id, note, pin } = req.body || {};
+  // Llamada interna del propio backend (despacho v2): identifica al usuario
+  // por id, ya logueado con su PIN. Ver lib/qcTokenInterno.js.
+  const qcUserIdInterno = esTokenInterno(req.get('x-qc-interno')) ? Number(req.body?.qc_user_id) : null;
+  const esInterno = Number.isInteger(qcUserIdInterno);
 
   const nItemId = Number(item_id);
   const stageKey = String(stage_key || '').trim();
@@ -341,17 +346,21 @@ router.post('/qc/authorize', async (req, res) => {
   if (!Number.isInteger(nItemId)) return res.status(400).json({ error: 'item_id invalido' });
   if (!stageKey) return res.status(400).json({ error: 'stage_key requerido' });
   if (!isValidQcStatus(qcStatus)) return res.status(400).json({ error: 'qc_status invalido' });
-  if (!/^\d{3,10}$/.test(pinStr)) return res.status(400).json({ error: 'PIN invalido (solo numerico)' });
+  if (!esInterno && !/^\d{3,10}$/.test(pinStr)) return res.status(400).json({ error: 'PIN invalido (solo numerico)' });
 
   const client = await pool.connect();
   try {
     await client.query('begin');
 
-    const pinHash = hashPin(pinStr);
-    const uQ = await client.query(
-      `select id, name, is_global, is_active from public.qc_users where pin_hash = $1 limit 1;`,
-      [pinHash]
-    );
+    const uQ = esInterno
+      ? await client.query(
+        `select id, name, is_global, is_active from public.qc_users where id = $1 limit 1;`,
+        [qcUserIdInterno]
+      )
+      : await client.query(
+        `select id, name, is_global, is_active from public.qc_users where pin_hash = $1 limit 1;`,
+        [hashPin(pinStr)]
+      );
 
     const user = uQ.rows[0];
     if (!user || !user.is_active) {

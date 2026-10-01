@@ -1244,4 +1244,12 @@ export async function aprobarLogisticaRendicion(viajeId) {
   return data;
 }
 
+// Padrón de portones instalados en clientes finales (solo lectura): dirección
+// + link de Maps, NV y tipo de portón. 60s: es un solo pedido grande y puede
+// tocarle el cold start del backend en Render.
+export async function fetchPortonesInstalados() {
+  const { data } = await api.get('/admin/portones-instalados', { timeout: 60000 });
+  return data;
+}
+
 export default api;

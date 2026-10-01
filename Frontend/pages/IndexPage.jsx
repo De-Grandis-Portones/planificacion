@@ -88,6 +88,12 @@ export default function IndexPage({ routes = [] }) {
   // sección "Programadores" (Motor de Reglas, Gantt, Tickets, Índice de
   // Programación) se gatea con este scope nuevo, aparte.
   const isProgramadoresAdmin = has('programadores:admin');
+  // Mismo listado de scopes que valida el backend
+  // (Backend/server/routes/admin/portonesInstalados.js) - mantenerlos iguales.
+  const puedeVerPortonesInstalados = [
+    'preproduccion:full', 'preproduccion:admin', 'preproduccion:comercial_view',
+    'qc:admin', 'workflow:admin', 'servicio_tecnico:admin', 'programadores:admin',
+  ].some((s) => has(s));
 
   const isPreprodOnly = isPreprodAdmin && !isQcAdmin && !isWfAdmin && !canUsers;
 
@@ -220,7 +226,7 @@ export default function IndexPage({ routes = [] }) {
     { path: '/listas-precios.html', label: 'Actualizar listas de precios' },
   ], []);
 
-  const infoRoutes = useMemo(() => {
+  const infoRoutesBase = useMemo(() => {
     if (isPreprodOnly) return preprodRoutes;
 
     if (isPreprodAdmin && !(isQcAdmin || isWfAdmin)) {
@@ -240,6 +246,14 @@ export default function IndexPage({ routes = [] }) {
       { path: '/stats/portones', label: 'Stats · Portones' },
     ];
   }, [isPreprodOnly, isPreprodAdmin, isQcAdmin, isWfAdmin, preprodRoutes]);
+
+  // Portones instalados: también lo ven scopes que no entran al resto de esta
+  // sección (servicio técnico, programadores, preproducción comercial).
+  const infoRoutes = useMemo(() => (
+    puedeVerPortonesInstalados
+      ? [...infoRoutesBase, { path: '/admin/portones-instalados', label: 'Portones instalados · Clientes finales' }]
+      : infoRoutesBase
+  ), [infoRoutesBase, puedeVerPortonesInstalados]);
 
   // Lo que se muestra en la sección "Programadores": el Chat primero (con su
   // badge de mensajes nuevos) y después programadoresRoutes. Mismo gate.

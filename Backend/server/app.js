@@ -20,6 +20,7 @@ const adminLogisticaAdjuntosRoutes = require('./routes/admin/logisticaAdjuntos')
 const adminNotasNodoRoutes = require('./routes/admin/notasNodo');
 const adminReunionesRoutes = require('./routes/admin/reuniones');
 const adminProgramadoresChatRoutes = require('./routes/admin/programadoresChat');
+const adminPortonesInstaladosRoutes = require('./routes/admin/portonesInstalados');
 
 const plantaRoutes = require('./routes/public/planta');
 const despacharRoutes = require('./routes/public/despachar');
@@ -97,6 +98,8 @@ app.use('/admin', adminInsumosRoutes);
 app.use('/admin', adminLogisticaConsultasRoutes);
 app.use('/admin', adminLogisticaViajesRoutes);
 app.use('/admin', adminLogisticaAdjuntosRoutes);
+// Mismo motivo: lo ven scopes que no son el de qc/workflow (preproducción, etc.).
+app.use('/admin', adminPortonesInstaladosRoutes);
 app.use('/admin', adminQcRoutes);
 app.use('/admin', adminWorkflowRoutes);
 app.use('/admin', adminPrefabricadosRoutes);

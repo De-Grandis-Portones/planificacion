@@ -48,6 +48,7 @@ import ServicioTecnicoFechasPage from '../pages/admin/ServicioTecnicoFechasPage'
 import AdminTicketsPage from '../pages/admin/AdminTicketsPage';
 import AdminTicketsBoardPage from '../pages/admin/AdminTicketsBoardPage';
 import ReunionesPage from '../pages/admin/ReunionesPage';
+import PortonesInstaladosPage from '../pages/admin/PortonesInstaladosPage';
 
 import PreproduccionValoresTable from '../src/components/PreproduccionValoresTable';
 import IpanelPreproduccionValoresTable from '../src/components/IpanelPreproduccionValoresTable';
@@ -751,6 +752,7 @@ export default function App() {
           <Route path="/admin/scheduling/reglas" element={<SchedulingRulesNavPage />} />
           <Route path="/admin/programadores/chat" element={<ProgramadoresChatPage />} />
           <Route path="/admin/excel-info" element={<AdminExcelInfoPage />} />
+          <Route path="/admin/portones-instalados" element={<PortonesInstaladosPage />} />
           <Route path="/admin/prefabricados" element={<PrefabricadosConfigPage />} />
           <Route path="/admin/servicio-tecnico" element={<ServicioTecnicoPage />} />
           <Route path="/admin/servicio-tecnico-solicitudes" element={<ServicioTecnicoSolicitudesPage />} />

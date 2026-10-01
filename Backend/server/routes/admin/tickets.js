@@ -25,6 +25,9 @@ async function getColumnasValidas() {
   return new Set([...COLUMNAS_TABLERO_FIJAS, ...apartados.map((a) => a.clave)]);
 }
 const MAX_ADJUNTOS = 5;
+// Largo máximo del título libre del ticket (el input del widget ya lo corta
+// con maxLength; acá se recorta por si alguien llama a la API directo).
+const MAX_TITULO = 120;
 // ~15MB de bytes crudos de adjuntos (igual al límite combinado del cliente,
 // ver ticketAttachment.js) codificado en base64 (~x1.34). El cliente ya
 // valida esto antes de enviar, pero acá no hay que confiar ciegamente en
@@ -59,17 +62,25 @@ function adjuntosExceedTotal(adjuntos) {
 // POST /admin/tickets — crear un ticket
 router.post('/tickets', adminAuth, async (req, res) => {
   try {
+    const titulo = String(req.body?.titulo || '').trim().slice(0, MAX_TITULO);
     const categoria = String(req.body?.categoria || '').trim();
     const mensaje = String(req.body?.mensaje || '').trim();
     const rutaOrigen = req.body?.rutaOrigen ? String(req.body.rutaOrigen) : null;
+    const appOrigenReq = String(req.body?.appOrigen || '').trim();
+    const appOrigen = APP_ORIGENES_MANUAL_PERMITIDOS.includes(appOrigenReq) ? appOrigenReq : 'planificacion';
+    // Las tareas del tablero no llevan título aparte: su categoría ya es el
+    // texto de la tarea (ver crearTarea en AdminTicketsBoardPage.jsx). El
+    // widget nuevo ya no deja enviar sin título: este mensaje solo lo ve
+    // quien tiene abierta la versión vieja de la pantalla (sin el campo).
+    if (!titulo && appOrigen !== 'tarea') {
+      return res.status(400).json({ error: 'Falta el título. Si no ves el campo "Título", recargá la página.' });
+    }
     if (!categoria) return res.status(400).json({ error: 'Falta la categoría' });
     if (!mensaje) return res.status(400).json({ error: 'Falta el mensaje' });
     const adjuntos = normalizeAdjuntos(req.body?.adjuntos);
     if (adjuntosExceedTotal(adjuntos)) {
       return res.status(400).json({ error: 'Los adjuntos superan el tamaño total permitido.' });
     }
-    const appOrigenReq = String(req.body?.appOrigen || '').trim();
-    const appOrigen = APP_ORIGENES_MANUAL_PERMITIDOS.includes(appOrigenReq) ? appOrigenReq : 'planificacion';
     // boardColumn solo importa para 'tarea' (en qué columna/apartado se creó
     // la tarjeta) - se valida contra las columnas que existen HOY (fijas +
     // apartados custom), si no llega ninguna válida cae en 'tarea'.
@@ -81,6 +92,7 @@ router.post('/tickets', adminAuth, async (req, res) => {
     }
 
     const ticket = await ticketsDb.createTicket({
+      titulo: titulo || null,
       categoria,
       mensaje,
       rutaOrigen,

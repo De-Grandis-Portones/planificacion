@@ -92,7 +92,7 @@ export default function AdminTicketsPage() {
           <thead>
             <tr style={{ textAlign: 'left', borderBottom: '2px solid var(--border)' }}>
               <th style={{ padding: 8 }}>App</th>
-              <th style={{ padding: 8 }}>Categoría</th>
+              <th style={{ padding: 8 }}>Título</th>
               <th style={{ padding: 8 }}>Mensaje</th>
               <th style={{ padding: 8 }}>Creado por</th>
               <th style={{ padding: 8 }}>Fecha</th>
@@ -107,7 +107,11 @@ export default function AdminTicketsPage() {
                 style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
               >
                 <td style={{ padding: 8 }}>{APP_LABEL[t.app_origen] || t.app_origen || '—'}</td>
-                <td style={{ padding: 8, fontWeight: 600 }}>{t.categoria}</td>
+                {/* Tickets viejos (sin título): se ve la categoría, como antes. */}
+                <td style={{ padding: 8, maxWidth: 280 }}>
+                  <div style={{ fontWeight: 600, overflowWrap: 'anywhere' }}>{t.titulo || t.categoria}</div>
+                  {t.titulo && <div style={{ fontSize: 12, color: 'var(--ink-weak)' }}>{t.categoria}</div>}
+                </td>
                 <td style={{ padding: 8, maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {t.mensaje}
                 </td>

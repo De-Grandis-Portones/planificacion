@@ -12,7 +12,7 @@ const { pool } = require('../db');
 // carga de /admin/tickets bajaban el base64 de TODOS los adjuntos de TODOS
 // los tickets solo para mostrar categoría/estado/fecha.
 const TICKET_LIST_COLUMNS = `
-  id, categoria, mensaje, estado, creado_por_id, creado_por_username,
+  id, titulo, categoria, mensaje, estado, creado_por_id, creado_por_username,
   ruta_origen, app_origen, board_column, en_progreso_por, created_at, updated_at
 `;
 
@@ -87,7 +87,7 @@ async function returningConNombres(sqlSinReturning, params) {
   return rows[0] || null;
 }
 
-async function createTicket({ categoria, mensaje, rutaOrigen, creadoPorId, creadoPorUsername, appOrigen, boardColumn, adjuntos }) {
+async function createTicket({ titulo, categoria, mensaje, rutaOrigen, creadoPorId, creadoPorUsername, appOrigen, boardColumn, adjuntos }) {
   const appOrigenFinal = appOrigen || 'planificacion';
   // Una tarjeta "tarea" arranca viéndose en la columna donde se creó (la
   // propia "Tareas" o cualquier apartado custom - ver "+ Crear tarea" en
@@ -99,8 +99,8 @@ async function createTicket({ categoria, mensaje, rutaOrigen, creadoPorId, cread
   const boardColumnFinal = appOrigenFinal === 'tarea' ? (boardColumn || 'tarea') : null;
   return returningConNombres(
     `
-    insert into public.tickets (categoria, mensaje, ruta_origen, creado_por_id, creado_por_username, app_origen, board_column, adjuntos)
-    values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+    insert into public.tickets (categoria, mensaje, ruta_origen, creado_por_id, creado_por_username, app_origen, board_column, adjuntos, titulo)
+    values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
     `,
     [
       categoria,
@@ -111,6 +111,7 @@ async function createTicket({ categoria, mensaje, rutaOrigen, creadoPorId, cread
       appOrigenFinal,
       boardColumnFinal,
       JSON.stringify(Array.isArray(adjuntos) ? adjuntos : []),
+      titulo || null,
     ]
   );
 }

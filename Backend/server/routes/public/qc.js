@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const { pool } = require('../../db');
 const { STATUS, low, loadStageMap, getNextStages, checkRequirements } = require('../../lib/workflow');
 const { esTokenInterno } = require('../../lib/qcTokenInterno');
+const { toMmHeuristic } = require('../../lib/logisticaCapacidad');
 
 const router = express.Router();
 
@@ -28,6 +29,9 @@ const PORTON_ETAPAS = new Set([
   'despacho',
   'corte_revest',
   'plegado_revest',
+  'corte_dintel',
+  'plegado_dintel',
+  'armado_dintel',
 ]);
 
 const IPANEL_ETAPAS = new Set(['diseno', 'guillotina', 'plegado', 'pintura', 'inyeccion', 'despacho']);
@@ -92,6 +96,12 @@ async function getPortonCtxById(db, id) {
     }
   } catch {}
   try { delete ctx.preprod_data; } catch {}
+
+  // Ver mismo cálculo/comentario en getPortonShapeById (portones.js): ancho
+  // normalizado a mm para la condición de ruteo Laser Dintel vs. Corte/
+  // Plegado/Armado Dintel. Default 0 si no se puede determinar.
+  const anchoRaw = ctx.Ancho ?? ctx.ancho ?? ctx.Puerta_Ancho ?? ctx.puerta_ancho;
+  ctx.ancho_mm_normalizado = toMmHeuristic(anchoRaw) ?? 0;
 
   const tQ = await db.query(
     `select etapa as k, inicio, fin from public.porton_etapas_tiempos where porton_id = $1;`,

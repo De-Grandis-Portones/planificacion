@@ -37,11 +37,14 @@ const STAGE_DEFS = [
 
   { key: 'guillotina', label: 'Guillotina' },
   { key: 'corte_revest', label: 'Corte Revest.' },
+  { key: 'corte_dintel', label: 'Corte Dintel' },
 
   { key: 'plegadora', label: 'Plegadora' },
   { key: 'plegado_revest', label: 'Plegado Revest.' },
+  { key: 'plegado_dintel', label: 'Plegado Dintel' },
 
   { key: 'armado_piernas', label: 'Arm. Piernas' },
+  { key: 'armado_dintel', label: 'Arm. Dintel' },
   { key: 'armado_hojas', label: 'Arm. Hojas' },
   { key: 'armado_marco_piernas', label: 'Arm. Marco/Piernas' },
   { key: 'armado_primario', label: 'Arm. Primario' },

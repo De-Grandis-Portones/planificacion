@@ -22,13 +22,16 @@ const STAGES = [
   // Corte
   { key: 'guillotina',           label: 'Corte (Piernas)' },
   { key: 'corte_revest',         label: 'Corte (Revestimiento)' },
+  { key: 'corte_dintel',         label: 'Corte Dintel' },
 
   // Plegado
   { key: 'plegadora',            label: 'Plegado (Piernas)' },
   { key: 'plegado_revest',       label: 'Plegado (Revestimiento)' },
+  { key: 'plegado_dintel',       label: 'Plegado Dintel' },
 
   // Prefabricados / Armados
   { key: 'armado_piernas',       label: 'Armado Piernas' },
+  { key: 'armado_dintel',        label: 'Armado Dintel' },
   { key: 'armado_marco_piernas', label: 'Armado Marco Piernas' },
   { key: 'armado_hojas',         label: 'Armado Hojas' },
   { key: 'armado_primario',      label: 'Armado Primario' },

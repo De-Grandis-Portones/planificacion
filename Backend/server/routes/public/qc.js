@@ -5,6 +5,9 @@ const { STATUS, low, loadStageMap, getNextStages, checkRequirements } = require(
 const { esTokenInterno } = require('../../lib/qcTokenInterno');
 const { toMmHeuristic } = require('../../lib/logisticaCapacidad');
 
+// Ver mismo sentinel/comentario en portones.js (getPortonShapeById).
+const ANCHO_MM_SIN_DATO = 999999;
+
 const router = express.Router();
 
 const PORTON_ETAPAS = new Set([
@@ -99,9 +102,10 @@ async function getPortonCtxById(db, id) {
 
   // Ver mismo cálculo/comentario en getPortonShapeById (portones.js): ancho
   // normalizado a mm para la condición de ruteo Laser Dintel vs. Corte/
-  // Plegado/Armado Dintel. Default 0 si no se puede determinar.
+  // Plegado/Armado Dintel. Sin dato, default ANCHO_MM_SIN_DATO (mantiene el
+  // camino de siempre, Laser Dintel).
   const anchoRaw = ctx.Ancho ?? ctx.ancho ?? ctx.Puerta_Ancho ?? ctx.puerta_ancho;
-  ctx.ancho_mm_normalizado = toMmHeuristic(anchoRaw) ?? 0;
+  ctx.ancho_mm_normalizado = toMmHeuristic(anchoRaw) ?? ANCHO_MM_SIN_DATO;
 
   const tQ = await db.query(
     `select etapa as k, inicio, fin from public.porton_etapas_tiempos where porton_id = $1;`,

@@ -5,6 +5,13 @@ const { isValidISODate10 } = require('../../lib/common');
 const { STATUS, loadStageMap, getNextStages, checkRequirements } = require('../../lib/workflow');
 const { toMmHeuristic } = require('../../lib/logisticaCapacidad');
 
+// Sentinel para ancho_mm_normalizado cuando no hay dato de ancho (ver uso en
+// getPortonShapeById): claramente > 3500 para que el ruteo Laser Dintel vs.
+// Corte/Plegado/Armado Dintel, ante falta de dato, mantenga el comportamiento
+// de siempre (Laser Dintel sin condición), en vez de caer por error en el
+// camino nuevo sin confirmar que corresponde.
+const ANCHO_MM_SIN_DATO = 999999;
+
 const router = express.Router();
 
 function mergePreprodData(row) {
@@ -184,14 +191,17 @@ async function getPortonShapeById(db, id) {
   const shape = { ...pre, ...row };
 
   // Ancho normalizado a mm para la condición de ruteo Laser Dintel vs. Corte/
-  // Plegado/Armado Dintel (portones > 3500mm se chapean en vez de laserear) -
-  // el dato real viene mezclado en mm o en metros según el formulario de
+  // Plegado/Armado Dintel (portones <=3500mm de ancho se chapean en vez de
+  // laserear el dintel; >3500mm sigue por Laser Dintel como siempre) - el
+  // dato real viene mezclado en mm o en metros según el formulario de
   // medición que se haya usado (ver toMmHeuristic), y en portones viejos ni
-  // siquiera está cargado. Si no se puede determinar, default 0 (no ancho) -
-  // mantiene el ruteo de siempre por Laser Dintel en vez de bloquear por un
-  // dato faltante.
+  // siquiera está cargado. Si no se puede determinar, default a un valor
+  // claramente > 3500 (en vez de 0): el comportamiento de siempre era
+  // laserear el dintel sin condición, así que ante falta de dato se mantiene
+  // ESE camino en vez de mandar por error al camino nuevo sin confirmar que
+  // de verdad corresponde.
   const anchoRaw = shape.Ancho ?? shape.ancho ?? shape.Puerta_Ancho ?? shape.puerta_ancho;
-  shape.ancho_mm_normalizado = toMmHeuristic(anchoRaw) ?? 0;
+  shape.ancho_mm_normalizado = toMmHeuristic(anchoRaw) ?? ANCHO_MM_SIN_DATO;
 
   return shape;
 }

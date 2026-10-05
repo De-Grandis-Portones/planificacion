@@ -867,6 +867,25 @@ const MIGRATIONS = [
     `,
   },
   {
+    // "No la voy a hacer" en Tickets (pedido explícito 2026-10-05): al lado
+    // de "Asignarme", cada admin puede avisar que no se va a encargar de un
+    // ticket/tarea, con un motivo opcional. Una fila por ticket y persona;
+    // "deshacer" no borra, marca retirado_at. Tabla aparte (no una
+    // columna en tickets, que comparten las 6 apps); ON DELETE CASCADE
+    // porque los tickets sí se pueden borrar (deleteTicketAdmin/deleteOwnTicket).
+    name: 'ticket_declinaciones',
+    sql: `
+      CREATE TABLE IF NOT EXISTS public.ticket_declinaciones (
+        ticket_id INTEGER NOT NULL REFERENCES public.tickets(id) ON DELETE CASCADE,
+        username TEXT NOT NULL,
+        motivo TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        retirado_at TIMESTAMPTZ,
+        PRIMARY KEY (ticket_id, username)
+      );
+    `,
+  },
+  {
     // Proyectos de la sección Programadores (/admin/programadores/proyectos,
     // pedido explícito 2026-10-05): tarjetas con encargado e integrantes
     // (TEXT[] de usernames de admin_users) y un chat por proyecto solo para

@@ -10,7 +10,9 @@ import { Link, useNavigate } from 'react-router-dom';
 import { clearAdminToken, fetchAdminTickets } from '../../src/api';
 import AdminTicketDetailModal, { ESTADO_LABEL, ESTADO_COLOR, APP_LABEL } from '../../src/components/AdminTicketDetailModal';
 import UserAvatar from '../../src/components/UserAvatar';
-import { nombreConUsuario } from '../../src/utils/nombreUsuario';
+import { nombreConUsuario, nombresNoLaHacen } from '../../src/utils/nombreUsuario';
+import { getCurrentAdminUsername } from '../../src/utils/adminScopes';
+import { leerSoloMisTareas, guardarSoloMisTareas } from '../../src/utils/soloMisTareas';
 
 const ESTADOS = [
   { key: '', label: 'Todos' },
@@ -27,6 +29,10 @@ export default function AdminTicketsPage() {
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState('');
   const [seleccionadoId, setSeleccionadoId] = useState(null);
+  // "Solo mis tareas" (misma preferencia que el tablero, ver soloMisTareas.js).
+  const miUsername = useMemo(() => getCurrentAdminUsername() || '', []);
+  const [soloMias, setSoloMias] = useState(leerSoloMisTareas);
+  useEffect(() => { guardarSoloMisTareas(soloMias); }, [soloMias]);
 
   const logout = () => {
     clearAdminToken();
@@ -56,6 +62,11 @@ export default function AdminTicketsPage() {
     [tickets]
   );
 
+  const visibles = useMemo(
+    () => (soloMias ? tickets.filter((t) => t.en_progreso_por === miUsername) : tickets),
+    [tickets, soloMias, miUsername]
+  );
+
   return (
     <div className="container" style={{ maxWidth: '100%' }}>
       <div className="header-row" style={{ alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
@@ -80,6 +91,15 @@ export default function AdminTicketsPage() {
             {e.key === 'pending' && pendientesCount > 0 && (!estadoFiltro || estadoFiltro === 'pending') ? ` (${pendientesCount})` : ''}
           </button>
         ))}
+        <button
+          type="button"
+          className={soloMias ? 'btn btn--brand' : 'btn'}
+          aria-pressed={soloMias}
+          onClick={() => setSoloMias((v) => !v)}
+          title={soloMias ? 'Volver a ver todos' : 'Ver solo los tickets y tareas que tenés asignados'}
+        >
+          Solo mis tareas
+        </button>
         <button className="btn" type="button" onClick={cargar} disabled={cargando} style={{ marginLeft: 'auto' }}>
           {cargando ? 'Actualizando...' : 'Actualizar'}
         </button>
@@ -100,11 +120,14 @@ export default function AdminTicketsPage() {
             </tr>
           </thead>
           <tbody>
-            {tickets.map((t) => (
+            {visibles.map((t) => (
               <tr
                 key={t.id}
                 onClick={() => setSeleccionadoId(t.id)}
-                style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
+                style={{
+                  borderBottom: '1px solid var(--border)', cursor: 'pointer',
+                  background: miUsername && t.en_progreso_por === miUsername ? 'var(--brand-100)' : undefined,
+                }}
               >
                 <td style={{ padding: 8 }}>{APP_LABEL[t.app_origen] || t.app_origen || '—'}</td>
                 {/* Tickets viejos (sin título): se ve la categoría, como antes. */}
@@ -124,16 +147,23 @@ export default function AdminTicketsPage() {
                   {t.en_progreso_por && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 2 }}>
                       <UserAvatar username={t.en_progreso_por} name={t.en_progreso_por_nombre} size={14} />
-                      <span style={{ fontSize: 11, color: 'var(--ink-weak)' }}>{t.en_progreso_por_nombre || t.en_progreso_por}</span>
+                      <span style={{ fontSize: 11, color: 'var(--ink-weak)' }}>
+                        {t.en_progreso_por === miUsername ? <strong style={{ color: 'var(--brand-700)' }}>Vos</strong> : (t.en_progreso_por_nombre || t.en_progreso_por)}
+                      </span>
+                    </div>
+                  )}
+                  {t.no_la_hacen?.length > 0 && (
+                    <div style={{ fontSize: 11, color: '#b3261e', marginTop: 2 }} title={t.no_la_hacen.map((d) => d.motivo).filter(Boolean).join(' · ')}>
+                      No la {t.no_la_hacen.length === 1 ? 'hace' : 'hacen'}: {nombresNoLaHacen(t.no_la_hacen, miUsername)}
                     </div>
                   )}
                 </td>
               </tr>
             ))}
-            {!cargando && tickets.length === 0 && (
+            {!cargando && visibles.length === 0 && (
               <tr>
                 <td colSpan={6} style={{ padding: 16, textAlign: 'center', color: 'var(--ink-weak)' }}>
-                  No hay tickets{estadoFiltro ? ' con ese estado' : ''}.
+                  {soloMias ? 'No tenés tickets asignados' : 'No hay tickets'}{estadoFiltro ? ' con ese estado' : ''}.
                 </td>
               </tr>
             )}

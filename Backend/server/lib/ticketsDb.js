@@ -65,6 +65,20 @@ function armarNombresSql(hayPresupuestadorUsers) {
         (select nullif(trim(au.name), '') from public.admin_users au where au.username = t.en_progreso_por),
         t.en_progreso_por
       ) as en_progreso_por_nombre`,
+    // Quiénes marcaron "No la voy a hacer" (y no lo deshicieron), con su
+    // nombre real y el motivo. Solo lo ven los admins: las consultas del
+    // dueño del ticket (getTicketForOwner/listMyTickets) no lo traen.
+    noLaHacen: `
+      coalesce((
+        select json_agg(json_build_object(
+                 'username', d.username,
+                 'nombre', coalesce((select nullif(trim(au.name), '') from public.admin_users au where au.username = d.username), d.username),
+                 'motivo', d.motivo,
+                 'created_at', d.created_at
+               ) order by d.created_at)
+          from public.ticket_declinaciones d
+         where d.ticket_id = t.id and d.retirado_at is null
+      ), '[]'::json) as no_la_hacen`,
     // Una respuesta de soporte (es_admin) siempre es de un admin de
     // Planificación; la del usuario, de la tabla de la app del ticket.
     autor: `
@@ -81,7 +95,7 @@ function armarNombresSql(hayPresupuestadorUsers) {
 async function returningConNombres(sqlSinReturning, params) {
   const n = await nombresSql();
   const { rows } = await pool.query(
-    `with t as (${sqlSinReturning} returning *) select t.*, ${n.creadoPor}, ${n.enProgresoPor} from t;`,
+    `with t as (${sqlSinReturning} returning *) select t.*, ${n.creadoPor}, ${n.enProgresoPor}, ${n.noLaHacen} from t;`,
     params
   );
   return rows[0] || null;
@@ -142,7 +156,7 @@ async function listAllTickets({ estado, categoria, appOrigen } = {}) {
   const where = conditions.length ? `where ${conditions.join(' and ')}` : '';
   const n = await nombresSql();
   const { rows } = await pool.query(
-    `select ${TICKET_LIST_COLUMNS}, ${n.creadoPor}, ${n.enProgresoPor} from public.tickets t ${where} order by created_at desc;`,
+    `select ${TICKET_LIST_COLUMNS}, ${n.creadoPor}, ${n.enProgresoPor}, ${n.noLaHacen} from public.tickets t ${where} order by created_at desc;`,
     params
   );
   return rows;
@@ -177,7 +191,7 @@ async function getTicketForOwner(id, userId) {
 async function getTicketAdmin(id) {
   const n = await nombresSql();
   const { rows } = await pool.query(
-    `select t.*, ${n.creadoPor}, ${n.enProgresoPor} from public.tickets t where t.id = $1;`,
+    `select t.*, ${n.creadoPor}, ${n.enProgresoPor}, ${n.noLaHacen} from public.tickets t where t.id = $1;`,
     [id]
   );
   const ticket = rows[0];
@@ -207,6 +221,9 @@ async function addMessage(ticketId, { autorId, autorUsername, esAdmin, mensaje }
 // como estaba (queda como "quién lo resolvió").
 async function setEstado(id, estado, actorUsername) {
   if (estado === 'in_progress') {
+    // Ponerlo "En curso" después de haber avisado "No la voy a hacer" es
+    // deshacerlo.
+    await retirarDeclinacion(id, actorUsername);
     return returningConNombres(
       `update public.tickets set estado = $2, en_progreso_por = $3, updated_at = now() where id = $1`,
       [id, estado, actorUsername || null]
@@ -301,10 +318,77 @@ async function createApartado(nombre) {
 // importar en qué estado esté (no hace falta que esté "En curso"). `valor`
 // null lo libera.
 async function setEnProgresoPor(id, valor) {
+  // Asignarse después de haber marcado "No la voy a hacer" lo deshace.
+  if (valor) await retirarDeclinacion(id, valor);
   return returningConNombres(
     `update public.tickets set en_progreso_por = $2, updated_at = now() where id = $1`,
     [id, valor]
   );
+}
+
+// "No la voy a hacer": deja constancia de que `username` no va a encargarse
+// de este ticket/tarea (con un motivo opcional), para que el resto sepa que
+// no tiene que esperarlo. Si era quien lo estaba trabajando, además se libera
+// (y si estaba "En curso" por él, vuelve a "Pendiente": ya no lo trabaja
+// nadie). Volver a marcarlo pisa el motivo. No le avisa a nadie: queda a la
+// vista en el ticket para los programadores. Devuelve la fila como
+// getTicketFila, o null si el ticket no existe.
+async function declinarTicket(id, username, motivo) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query('select id from public.tickets where id = $1 for update;', [id]);
+    if (!rows[0]) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    await client.query(
+      `
+      insert into public.ticket_declinaciones (ticket_id, username, motivo)
+      values ($1, $2, $3)
+      on conflict (ticket_id, username) do update
+        set motivo = excluded.motivo, created_at = now(), retirado_at = null;
+      `,
+      [id, username, motivo || null]
+    );
+    await client.query(
+      `
+      update public.tickets
+         set en_progreso_por = null,
+             estado = case when estado = 'in_progress' then 'pending' else estado end,
+             updated_at = now()
+       where id = $1 and en_progreso_por = $2;
+      `,
+      [id, username]
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+  return getTicketFila(id);
+}
+
+// "Deshacer": la marca queda en la base con retirado_at (no se borra).
+async function retirarDeclinacion(id, username) {
+  if (!username) return;
+  await pool.query(
+    'update public.ticket_declinaciones set retirado_at = now() where ticket_id = $1 and username = $2 and retirado_at is null;',
+    [id, username]
+  );
+}
+
+// Una fila con lo mismo que trae el listado admin (sin adjuntos), para
+// devolverle al modal/tablero después de un cambio.
+async function getTicketFila(id) {
+  const n = await nombresSql();
+  const { rows } = await pool.query(
+    `select ${TICKET_LIST_COLUMNS}, ${n.creadoPor}, ${n.enProgresoPor}, ${n.noLaHacen} from public.tickets t where t.id = $1;`,
+    [id]
+  );
+  return rows[0] || null;
 }
 
 // Borrar un apartado custom. Las tarjetas "tarea" que estaban viviendo ahí
@@ -344,6 +428,9 @@ module.exports = {
   addMessage,
   setEstado,
   setEnProgresoPor,
+  declinarTicket,
+  retirarDeclinacion,
+  getTicketFila,
   setBoardColumn,
   deleteOwnTicket,
   deleteTicketAdmin,

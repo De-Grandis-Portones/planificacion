@@ -801,6 +801,11 @@ export const updateTicketStatus = (id, estado) => api.patch(`/admin/tickets/${id
 // "Quitarme" (queda sin nadie) - un click directo, en cualquier estado.
 export const assignTicketToMe = (id) => api.patch(`/admin/tickets/${id}/asignado`, { accion: 'asignar' });
 export const unassignTicket = (id) => api.patch(`/admin/tickets/${id}/asignado`, { accion: 'liberar' });
+// "No la voy a hacer" (motivo opcional; si era el asignado, se libera) y
+// "Deshacer". Devuelven la fila con no_la_hacen actualizado. No le avisa a
+// nadie: es solo para que lo vean los programadores en el ticket.
+export const declinarTicket = (id, motivo) => api.patch(`/admin/tickets/${id}/no-la-hago`, { accion: 'declinar', motivo });
+export const retirarDeclinacionTicket = (id) => api.patch(`/admin/tickets/${id}/no-la-hago`, { accion: 'retirar' });
 // Solo para tarjetas "tarea" (creadas a mano en el tablero) - mueve la
 // tarjeta a otra columna del tablero, sin tocar su estado.
 export const updateTicketBoardColumn = (id, column) => api.patch(`/admin/tickets/${id}/board-column`, { column });

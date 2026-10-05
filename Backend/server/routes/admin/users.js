@@ -30,8 +30,38 @@ function normalizeScopes(scopes) {
   );
 }
 
+// Distinto de normalizeScopes de arriba a propósito: ese es para el array de
+// scopes que viene en el body al crear/editar un usuario (siempre array,
+// JSON). Este es para el token del que hace el request - mismo criterio
+// tolerante a string que ya usan qc.js/workflow.js - y no lo reusa porque
+// mezclar los dos casos en una sola función terminaría rechazando scopes
+// del token si `req.admin.scopes` alguna vez no es un array.
+function normalizeAuthScopes(scopesRaw) {
+  if (Array.isArray(scopesRaw)) return scopesRaw.map((s) => String(s || '').trim()).filter(Boolean);
+  if (typeof scopesRaw === 'string') return scopesRaw.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+  return [];
+}
+function hasScope(req, scope) {
+  const scopes = normalizeAuthScopes(req?.admin?.scopes ?? req?.admin?.scope ?? req?.admin?.permissions ?? []);
+  return scopes.includes(scope);
+}
+function requireScope(scope) {
+  return (req, res, next) => {
+    if (!hasScope(req, scope)) return res.status(403).json({ error: `Requiere scope ${scope}` });
+    return next();
+  };
+}
+
+// Con path ('/users', ...) en vez de global, mismo motivo que insumos.js: no
+// pisar otros routers admin montados en la misma base /admin. `/scopes` queda
+// afuera a propósito (solo devuelve la lista fija de nombres de scope, no hay
+// nada que proteger ahí).
+router.use('/users', adminAuth, requireScope('users:admin'));
+
+// adminAuth ya corre una vez en el router.use de arriba - no repetirlo acá
+// abajo (quedó duplicado en la primera versión de este cambio).
 // GET /admin/users
-router.get('/users', adminAuth, async (_req, res) => {
+router.get('/users', async (_req, res) => {
   try {
     const q = await pool.query(`
       select
@@ -55,7 +85,7 @@ router.get('/users', adminAuth, async (_req, res) => {
 });
 
 // POST /admin/users
-router.post('/users', adminAuth, async (req, res) => {
+router.post('/users', async (req, res) => {
   try {
     const body = req.body || {};
     const username = String(body.username || '').trim();
@@ -88,7 +118,7 @@ router.post('/users', adminAuth, async (req, res) => {
 });
 
 // PATCH /admin/users/:id
-router.patch('/users/:id', adminAuth, async (req, res) => {
+router.patch('/users/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id)) return res.status(400).json({ error: 'id inválido' });
@@ -149,7 +179,7 @@ router.patch('/users/:id', adminAuth, async (req, res) => {
 });
 
 // POST /admin/users/:id/password
-router.post('/users/:id/password', adminAuth, async (req, res) => {
+router.post('/users/:id/password', async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id)) return res.status(400).json({ error: 'id inválido' });

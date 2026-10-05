@@ -12,8 +12,28 @@ function hashPin(pin) {
 function isValidLine(line) { return ['portones', 'ipanel', 'prefabricados', 'servicio_tecnico', 'orden_externa', 'refabricado', 'insumos'].includes(line); }
 function isValidKind(k) { return ['OBSERVADO', 'RECHAZADO'].includes(k); }
 
+function normalizeScopes(scopesRaw) {
+  if (Array.isArray(scopesRaw)) return scopesRaw.map((s) => String(s || '').trim()).filter(Boolean);
+  if (typeof scopesRaw === 'string') return scopesRaw.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+  return [];
+}
+function hasScope(req, scope) {
+  const scopes = normalizeScopes(req?.admin?.scopes ?? req?.admin?.scope ?? req?.admin?.permissions ?? []);
+  return scopes.includes(scope);
+}
+function requireScope(scope) {
+  return (req, res, next) => {
+    if (!hasScope(req, scope)) return res.status(403).json({ error: `Requiere scope ${scope}` });
+    return next();
+  };
+}
+
+// Con path ('/qc', ...) en vez de global, mismo motivo que insumos.js: no
+// pisar otros routers admin montados en la misma base /admin.
+router.use('/qc', adminAuth, requireScope('qc:admin'));
+
 // GET /admin/qc/users
-router.get('/qc/users', adminAuth, async (_req, res) => {
+router.get('/qc/users', async (_req, res) => {
   try {
     const [uQ, sQ] = await Promise.all([
       pool.query(
@@ -51,7 +71,7 @@ router.get('/qc/users', adminAuth, async (_req, res) => {
 });
 
 // POST /admin/qc/users
-router.post('/qc/users', adminAuth, async (req, res) => {
+router.post('/qc/users', async (req, res) => {
   const { name, pin, is_global, is_active, scopes } = req.body || {};
   const nm = String(name || '').trim();
   const pinStr = String(pin || '').trim();
@@ -120,7 +140,7 @@ router.post('/qc/users', adminAuth, async (req, res) => {
 });
 
 // PUT /admin/qc/users/:id
-router.put('/qc/users/:id', adminAuth, async (req, res) => {
+router.put('/qc/users/:id', async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'id inválido' });
 
@@ -188,7 +208,7 @@ router.put('/qc/users/:id', adminAuth, async (req, res) => {
 });
 
 // PUT /admin/qc/users/:id/scopes
-router.put('/qc/users/:id/scopes', adminAuth, async (req, res) => {
+router.put('/qc/users/:id/scopes', async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'id inválido' });
 
@@ -248,7 +268,7 @@ router.put('/qc/users/:id/scopes', adminAuth, async (req, res) => {
 });
 
 // GET /admin/qc/motives
-router.get('/qc/motives', adminAuth, async (req, res) => {
+router.get('/qc/motives', async (req, res) => {
   try {
     const line = req.query.line ? String(req.query.line).trim() : null;
     const kind = req.query.kind ? String(req.query.kind).trim().toUpperCase() : null;
@@ -277,7 +297,7 @@ router.get('/qc/motives', adminAuth, async (req, res) => {
 });
 
 // POST /admin/qc/motives
-router.post('/qc/motives', adminAuth, async (req, res) => {
+router.post('/qc/motives', async (req, res) => {
   try {
     const { line, kind, stage_key, label, enabled, priority } = req.body || {};
     const ln = String(line || '').trim();
@@ -308,7 +328,7 @@ router.post('/qc/motives', adminAuth, async (req, res) => {
 });
 
 // PUT /admin/qc/motives/:id
-router.put('/qc/motives/:id', adminAuth, async (req, res) => {
+router.put('/qc/motives/:id', async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'id inválido' });
 

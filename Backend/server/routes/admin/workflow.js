@@ -9,7 +9,30 @@ function isValidLine(line) {
   return ['portones', 'ipanel'].includes(String(line || '').trim());
 }
 
-router.get('/workflow/config', adminAuth, async (req, res) => {
+function normalizeScopes(scopesRaw) {
+  if (Array.isArray(scopesRaw)) return scopesRaw.map((s) => String(s || '').trim()).filter(Boolean);
+  if (typeof scopesRaw === 'string') return scopesRaw.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+  return [];
+}
+function hasScope(req, scope) {
+  const scopes = normalizeScopes(req?.admin?.scopes ?? req?.admin?.scope ?? req?.admin?.permissions ?? []);
+  return scopes.includes(scope);
+}
+function requireScope(scope) {
+  return (req, res, next) => {
+    if (!hasScope(req, scope)) return res.status(403).json({ error: `Requiere scope ${scope}` });
+    return next();
+  };
+}
+
+// Con path ('/workflow', ...) en vez de global, mismo motivo que insumos.js.
+// Esto NO afecta a los tableros de producción (los que corren en tablets):
+// esos leen el config desde routes/public/workflow.js, un endpoint público
+// aparte, sin login - este archivo es solo el editor visual de admin
+// (WorkflowDesignerPage.jsx).
+router.use('/workflow', adminAuth, requireScope('workflow:admin'));
+
+router.get('/workflow/config', async (req, res) => {
   try {
     const line = String(req.query.line || '').trim();
     if (!isValidLine(line)) return res.status(400).json({ error: 'line debe ser portones o ipanel' });
@@ -21,7 +44,7 @@ router.get('/workflow/config', adminAuth, async (req, res) => {
   }
 });
 
-router.get('/workflow/condition-fields', adminAuth, async (req, res) => {
+router.get('/workflow/condition-fields', async (req, res) => {
   try {
     const line = String(req.query.line || '').trim();
     if (!isValidLine(line)) return res.status(400).json({ error: 'line debe ser portones o ipanel' });
@@ -103,7 +126,7 @@ router.get('/workflow/condition-fields', adminAuth, async (req, res) => {
   }
 });
 
-router.put('/workflow/config', adminAuth, async (req, res) => {
+router.put('/workflow/config', async (req, res) => {
   const line = String(req.query.line || '').trim();
   if (!isValidLine(line)) return res.status(400).json({ error: 'line debe ser portones o ipanel' });
 

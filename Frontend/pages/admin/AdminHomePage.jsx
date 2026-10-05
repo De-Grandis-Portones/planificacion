@@ -165,6 +165,7 @@ export default function AdminHomePage() {
             Ir a Logística de Viajes
           </Link>
         </div>
+
       </div>
 
       <div style={{ marginTop: 14, fontSize: 12, opacity: 0.7 }}>

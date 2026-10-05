@@ -750,6 +750,28 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_logistica_viaje_checklist_confirmaciones_viaje ON public.logistica_viaje_checklist_confirmaciones(viaje_id);
     `,
   },
+  {
+    // "Reuniones y Tareas" (/admin/reuniones) - agenda simple para que los
+    // admins carguen fecha/hora de reuniones entre ellos. Sin invitados/RSVP
+    // (no se pidió) - un espacio compartido, cualquier admin ve/crea/edita,
+    // mismo criterio "sin scope propio" que /admin/tickets.
+    name: 'reuniones_admin',
+    sql: `
+      CREATE TABLE IF NOT EXISTS public.reuniones (
+        id SERIAL PRIMARY KEY,
+        titulo TEXT NOT NULL,
+        descripcion TEXT,
+        fecha DATE NOT NULL,
+        hora_inicio TIME NOT NULL,
+        hora_fin TIME,
+        enlace TEXT,
+        creado_por TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_reuniones_fecha ON public.reuniones(fecha);
+    `,
+  },
 ];
 
 async function runMigrations() {

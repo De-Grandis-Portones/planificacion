@@ -1,7 +1,8 @@
 // src/pages/IndexPage.jsx
 import { Link, useNavigate } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
-import { fetchAdminTickets } from '../src/api';
+import { fetchAdminTickets, fetchReuniones } from '../src/api';
+import { todayISO10 } from '../src/utils/isoWeek';
 
 function parseJwtPayload(token) {
   try {
@@ -118,6 +119,29 @@ export default function IndexPage({ routes = [] }) {
     };
   }, []);
 
+  // Cuántas reuniones hay cargadas para HOY - mismo criterio que el badge de
+  // Tickets pendientes: para que no haga falta entrar a /admin/reuniones a
+  // ver si hay algo agendado.
+  const [reunionesHoyCount, setReunionesHoyCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    async function cargarReunionesHoy() {
+      try {
+        const hoy = todayISO10();
+        const { data } = await fetchReuniones({ desde: hoy, hasta: hoy });
+        if (!cancelled) setReunionesHoyCount((data?.reuniones || []).length);
+      } catch (err) {
+        console.error('Error cargando reuniones de hoy:', err);
+      }
+    }
+    cargarReunionesHoy();
+    const interval = setInterval(cargarReunionesHoy, 60000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
+
   const logout = () => {
     clearAdminSession();
     nav('/admin/login', { replace: true });
@@ -139,23 +163,17 @@ export default function IndexPage({ routes = [] }) {
     if (isComprasAdmin) out.push({ path: '/admin/insumos', label: 'Admin · Compras (Pedidos de Insumos)' });
     if (isComprasAdmin) out.push({ path: '/admin/insumos/entregas', label: 'Admin · Compras · Entregas de Insumos' });
     if (isComprasAdmin) out.push({ path: '/admin/insumos/config', label: 'Admin · Compras · Config Categorías↔Sección' });
+    out.push({
+      path: '/admin/tickets', label: 'Admin · Tickets', badge: pendingTicketsCount,
+      badgeTitle: `${pendingTicketsCount} ticket${pendingTicketsCount === 1 ? '' : 's'} pendiente${pendingTicketsCount === 1 ? '' : 's'}`,
+    });
+    out.push({
+      path: '/admin/reuniones', label: 'Admin · Reuniones y Tareas', badge: reunionesHoyCount,
+      badgeTitle: `${reunionesHoyCount} reunión${reunionesHoyCount === 1 ? '' : 'es'} hoy`,
+    });
+    out.push({ path: '/admin/indice-programacion', label: 'Admin · Índice de Programación (BETA)' });
     return out;
-  }, [isPreprodOnly, isQcAdmin, isWfAdmin, canUsers, isPrefabAdmin, isStAdmin, isComprasAdmin]);
-
-  // Sección "Programadores" — scope nuevo y separado (programadores:admin),
-  // hoy solo en el usuario admin. Motor de reglas de tiempo, sus dos
-  // pantallas satélite, y (movidos de Admin general, donde antes se veían
-  // sin ningún scope) Tickets e Índice de Programación.
-  const programadoresRoutes = useMemo(() => {
-    if (isPreprodOnly || !isProgramadoresAdmin) return [];
-    return [
-      { path: '/admin/scheduling', label: 'Admin · Motor de Reglas de Tiempo (Beta)' },
-      { path: '/admin/scheduling/reglas', label: 'Admin · Reglas de Desvío (Beta)' },
-      { path: '/admin/scheduling/gantt', label: 'Admin · Gantt de Producción (Beta)' },
-      { path: '/admin/tickets', label: 'Admin · Tickets', badge: pendingTicketsCount },
-      { path: '/admin/indice-programacion', label: 'Admin · Índice de Programación (BETA)' },
-    ];
-  }, [isPreprodOnly, isProgramadoresAdmin, pendingTicketsCount]);
+  }, [isPreprodOnly, isQcAdmin, isWfAdmin, canUsers, isPrefabAdmin, isStAdmin, isComprasAdmin, pendingTicketsCount, reunionesHoyCount]);
 
   const opsRoutes = useMemo(() => {
     if (isPreprodOnly) return [];
@@ -207,7 +225,7 @@ export default function IndexPage({ routes = [] }) {
     if (!r.badge) return null;
     return (
       <span
-        title={`${r.badge} ticket${r.badge === 1 ? '' : 's'} pendiente${r.badge === 1 ? '' : 's'}`}
+        title={r.badgeTitle || String(r.badge)}
         style={{
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
           minWidth: 18, height: 18, padding: '0 5px', marginLeft: 6, borderRadius: 999,

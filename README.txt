@@ -14,6 +14,7 @@ Cambio:
 Mantiene:
 - QC automático al hacer Stop.
 - Botón QC manual.
+- [test deploy post-transferencia de repo a De-Grandis-Portones]
 - Etiquetas:
   - Despacho: Semana N° X
   - Producción: Semana N° X

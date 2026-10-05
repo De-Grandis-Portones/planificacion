@@ -70,6 +70,25 @@ function isStaticPage(path) {
   return /\.html(?:$|[?#])/.test(String(path || ''));
 }
 
+// Accesos a las otras apps del ecosistema, uno por app, en la sección
+// Programadores junto a Tickets/Reuniones/Índice (pedido 2026-10-05: "como
+// reuniones, índice, ticket, agregar cada app que redirija a la app que
+// toque"). Dominios de producción verificados contra el título de cada repo
+// (ojo: integrador.vercel.app NO es nuestro). Se abren en otra pestaña para
+// no perder el planificador.
+const APPS_EXTERNAS = [
+  { path: 'https://presupuestador-degrandisportones.vercel.app', label: 'App · Presupuestador' },
+  { path: 'https://integrador-six-zeta.vercel.app', label: 'App · Integrador' },
+  { path: 'https://arca-comprobantes-frontend.vercel.app', label: 'App · Comprobantes ARCA → Odoo' },
+  { path: 'https://remitos.vercel.app', label: 'App · Remitos' },
+  { path: 'https://informes-dg-portones.vercel.app', label: 'App · Informe de Ventas' },
+  { path: 'https://distribuidor-vert-1r5j.vercel.app', label: 'App · Distribuidor' },
+];
+
+function isExternal(path) {
+  return /^https?:\/\//.test(String(path || ''));
+}
+
 export default function IndexPage({ routes = [] }) {
   const nav = useNavigate();
 
@@ -301,6 +320,7 @@ export default function IndexPage({ routes = [] }) {
         badgeTitle: `${proyectosNoLeidosCount} mensaje${proyectosNoLeidosCount === 1 ? '' : 's'} nuevo${proyectosNoLeidosCount === 1 ? '' : 's'} en tus proyectos`,
       },
       ...programadoresRoutes,
+      ...APPS_EXTERNAS,
     ];
   }, [isPreprodOnly, isProgramadoresAdmin, programadoresRoutes, chatNoLeidosCount, proyectosNoLeidosCount]);
 
@@ -321,6 +341,9 @@ export default function IndexPage({ routes = [] }) {
   };
 
   const NavTitle = ({ r }) => {
+    if (isExternal(r.path)) {
+      return <a href={r.path} target="_blank" rel="noopener noreferrer" className="idx-linkTitle">{r.label}</a>;
+    }
     if (isStaticPage(r.path)) {
       return <a href={r.path} className="idx-linkTitle">{r.label}<NavBadge r={r} /></a>;
     }
@@ -328,6 +351,9 @@ export default function IndexPage({ routes = [] }) {
   };
 
   const NavButton = ({ r }) => {
+    if (isExternal(r.path)) {
+      return <a href={r.path} target="_blank" rel="noopener noreferrer" className="btn btn--brand">Abrir</a>;
+    }
     if (isStaticPage(r.path)) {
       return <a href={r.path} className="btn btn--brand">Ir</a>;
     }
@@ -338,7 +364,10 @@ export default function IndexPage({ routes = [] }) {
     <li className="idx-linkItem">
       <div className="idx-linkText">
         <NavTitle r={r} />
-        <div className="idx-linkMeta">Ruta: <code>{r.path}</code></div>
+        <div className="idx-linkMeta">
+          {isExternal(r.path) ? 'Abre en otra pestaña: ' : 'Ruta: '}
+          <code>{isExternal(r.path) ? r.path.replace(/^https?:\/\//, '') : r.path}</code>
+        </div>
       </div>
       <NavButton r={r} />
     </li>
@@ -393,7 +422,7 @@ export default function IndexPage({ routes = [] }) {
               <div className="idx-section__head">
                 <div>
                   <div className="idx-section__title">Programadores</div>
-                  <div className="idx-section__sub">Chat del equipo, proyectos, motor de reglas de tiempo, tickets e índice de programación</div>
+                  <div className="idx-section__sub">Chat del equipo, proyectos, motor de reglas de tiempo, tickets, índice de programación y accesos a las otras apps</div>
                 </div>
                 <span className="idx-pill">Programadores</span>
               </div>

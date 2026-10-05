@@ -164,6 +164,11 @@
         <button class="btn" id="saveApiBtn" type="button">Guardar</button>
         <button class="btn" id="resetApiBtn" type="button">Usar Render</button>
       </div>
+      <p>Key de acceso (te la pasa quien te dio este link). Se guarda solo en este navegador.</p>
+      <div class="conn-row">
+        <input id="apiKeyInput" type="password" autocomplete="off" placeholder="Pegá acá la key" />
+        <button class="btn" id="saveApiKeyBtn" type="button">Guardar</button>
+      </div>
       <div id="status" class="status">Inicializando…</div>
     </section>
 
@@ -270,6 +275,12 @@
   <script>
     const DEFAULT_API_BASE = 'https://presupuestador-kdbl.onrender.com/api';
     const LS_API_BASE = 'dg_price_lists_api_base';
+    // Esta página no tiene login de usuario (nunca lo tuvo) - en vez del
+    // Bearer token que manda cotizador-front, manda esta key fija por header
+    // (ver requireAuthOrStaticKey en Presupuestador/cotizador-back/src/routes/priceLists.routes.js).
+    // Se guarda en localStorage, no hardcodeada en el código - pedila a quien
+    // la tenga (está en las env vars de Render del Presupuestador).
+    const LS_API_KEY = 'dg_price_lists_api_key';
     const CATEGORY_LABELS = { porton: 'Portones', ipanel: 'Ipanels', puerta: 'Puertas', plegados: 'Plegados', otros: 'Otros' };
     const CATEGORY_ORDER = ['porton', 'ipanel', 'puerta', 'plegados', 'otros'];
 
@@ -353,6 +364,7 @@
         ...options,
         headers: {
           'Content-Type': 'application/json',
+          'x-price-lists-key': localStorage.getItem(LS_API_KEY) || '',
           ...(options.headers || {}),
         },
       });
@@ -846,6 +858,12 @@
       loadTagsAndMap();
     });
 
+    $('saveApiKeyBtn').addEventListener('click', () => {
+      localStorage.setItem(LS_API_KEY, $('apiKeyInput').value.trim());
+      loadCompanies();
+      loadTagsAndMap();
+    });
+
     $('refreshBtn').addEventListener('click', () => { loadCompanies(); loadTagsAndMap(); });
     $('reloadProductsBtn').addEventListener('click', loadProducts);
     $('productFilter').addEventListener('input', renderProducts);
@@ -857,6 +875,7 @@
 
     state.apiBase = getInitialApiBase();
     $('apiBaseInput').value = state.apiBase;
+    $('apiKeyInput').value = localStorage.getItem(LS_API_KEY) || '';
     loadCompanies();
     loadTagsAndMap();
   </script>

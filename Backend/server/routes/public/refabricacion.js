@@ -18,6 +18,7 @@ const PORTON_ETAPAS = new Set([
   'inyeccion', 'revestimiento', 'pintura', 'pintura_revestimiento',
   'armado_final', 'despacho', 'corte_revest', 'plegado_revest',
   'laser_dintel', 'laser_hojas', 'laser_brazos_espada',
+  'corte_dintel', 'plegado_dintel', 'armado_dintel',
 ]);
 
 function isValidISODate10(v) {

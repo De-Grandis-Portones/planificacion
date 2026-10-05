@@ -3,6 +3,14 @@ const express = require('express');
 const { pool } = require('../../db');
 const { isValidISODate10 } = require('../../lib/common');
 const { STATUS, loadStageMap, getNextStages, checkRequirements } = require('../../lib/workflow');
+const { toMmHeuristic } = require('../../lib/logisticaCapacidad');
+
+// Sentinel para ancho_mm_normalizado cuando no hay dato de ancho (ver uso en
+// getPortonShapeById): claramente > 3500 para que el ruteo Laser Dintel vs.
+// Corte/Plegado/Armado Dintel, ante falta de dato, mantenga el comportamiento
+// de siempre (Laser Dintel sin condición), en vez de caer por error en el
+// camino nuevo sin confirmar que corresponde.
+const ANCHO_MM_SIN_DATO = 999999;
 
 const router = express.Router();
 
@@ -22,13 +30,15 @@ const PORTON_ETAPAS = new Set([
   'inyeccion', 'revestimiento', 'pintura', 'pintura_revestimiento', 'armado_final', 'despacho',
   'corte_revest', 'plegado_revest',
   'laser_dintel', 'laser_hojas', 'laser_brazos_espada',
+  'corte_dintel', 'plegado_dintel', 'armado_dintel',
 ]);
 
 // OJO: acá el orden solo lo usamos para “shape” y compatibilidad en frontend
 const PORTON_STAGE_KEYS_ORDER = [
   'diseno', 'diseno_piernas', 'diseno_revestimiento', 'laser', 'guillotina', 'plegadora',
   'armado_piernas', 'armado_primario', 'inyeccion', 'corte_revest', 'plegado_revest',
-  'revestimiento', 'pintura', 'pintura_revestimiento', 'armado_hojas', 'armado_marco_piernas', 'armado_final', 'despacho'
+  'revestimiento', 'pintura', 'pintura_revestimiento', 'armado_hojas', 'armado_marco_piernas', 'armado_final', 'despacho',
+  'corte_dintel', 'plegado_dintel', 'armado_dintel',
 ];
 
 // IMPORTANTE:
@@ -76,6 +86,9 @@ async function getPortonShapeById(db, id) {
       max(case when e.etapa = 'armado_marco_piernas'::public.porton_etapa then e.estado end) as armado_marco_piernas,
       max(case when e.etapa = 'armado_final'::public.porton_etapa then e.estado end) as armado_final,
       max(case when e.etapa = 'despacho'::public.porton_etapa then e.estado end) as despacho,
+      max(case when e.etapa = 'corte_dintel'::public.porton_etapa then e.estado end) as corte_dintel,
+      max(case when e.etapa = 'plegado_dintel'::public.porton_etapa then e.estado end) as plegado_dintel,
+      max(case when e.etapa = 'armado_dintel'::public.porton_etapa then e.estado end) as armado_dintel,
 
       -- ====== TIEMPOS (SIEMPRE desde porton_etapas_tiempos) ======
       max(case when t.etapa = 'diseno'::public.porton_etapa then t.inicio end) as diseno_inicio,
@@ -139,7 +152,16 @@ async function getPortonShapeById(db, id) {
       max(case when t.etapa = 'armado_final'::public.porton_etapa then t.fin end) as armado_final_fin,
 
       max(case when t.etapa = 'despacho'::public.porton_etapa then t.inicio end) as despacho_inicio,
-      max(case when t.etapa = 'despacho'::public.porton_etapa then t.fin end) as despacho_fin
+      max(case when t.etapa = 'despacho'::public.porton_etapa then t.fin end) as despacho_fin,
+
+      max(case when t.etapa = 'corte_dintel'::public.porton_etapa then t.inicio end) as corte_dintel_inicio,
+      max(case when t.etapa = 'corte_dintel'::public.porton_etapa then t.fin end) as corte_dintel_fin,
+
+      max(case when t.etapa = 'plegado_dintel'::public.porton_etapa then t.inicio end) as plegado_dintel_inicio,
+      max(case when t.etapa = 'plegado_dintel'::public.porton_etapa then t.fin end) as plegado_dintel_fin,
+
+      max(case when t.etapa = 'armado_dintel'::public.porton_etapa then t.inicio end) as armado_dintel_inicio,
+      max(case when t.etapa = 'armado_dintel'::public.porton_etapa then t.fin end) as armado_dintel_fin
 
     from public.portones p
     left join public.porton_etapas_estado e
@@ -166,7 +188,22 @@ async function getPortonShapeById(db, id) {
   // Se mergea al shape para que ctx[field] funcione.
   const pre = row.preprod_data && typeof row.preprod_data === 'object' ? row.preprod_data : {};
   delete row.preprod_data;
-  return { ...pre, ...row };
+  const shape = { ...pre, ...row };
+
+  // Ancho normalizado a mm para la condición de ruteo Laser Dintel vs. Corte/
+  // Plegado/Armado Dintel (portones <=3500mm de ancho se chapean en vez de
+  // laserear el dintel; >3500mm sigue por Laser Dintel como siempre) - el
+  // dato real viene mezclado en mm o en metros según el formulario de
+  // medición que se haya usado (ver toMmHeuristic), y en portones viejos ni
+  // siquiera está cargado. Si no se puede determinar, default a un valor
+  // claramente > 3500 (en vez de 0): el comportamiento de siempre era
+  // laserear el dintel sin condición, así que ante falta de dato se mantiene
+  // ESE camino en vez de mandar por error al camino nuevo sin confirmar que
+  // de verdad corresponde.
+  const anchoRaw = shape.Ancho ?? shape.ancho ?? shape.Puerta_Ancho ?? shape.puerta_ancho;
+  shape.ancho_mm_normalizado = toMmHeuristic(anchoRaw) ?? ANCHO_MM_SIN_DATO;
+
+  return shape;
 }
 
 // GET /portones
@@ -213,6 +250,9 @@ router.get('/portones', async (_req, res) => {
         max(e.armado_marco_piernas) as armado_marco_piernas,
         max(e.armado_final) as armado_final,
         max(e.despacho) as despacho,
+        max(e.corte_dintel) as corte_dintel,
+        max(e.plegado_dintel) as plegado_dintel,
+        max(e.armado_dintel) as armado_dintel,
 
         -- ====== TIEMPOS ======
         max(t.diseno_inicio) as diseno_inicio,
@@ -256,7 +296,13 @@ router.get('/portones', async (_req, res) => {
         max(t.armado_final_inicio) as armado_final_inicio,
         max(t.armado_final_fin) as armado_final_fin,
         max(t.despacho_inicio) as despacho_inicio,
-        max(t.despacho_fin) as despacho_fin
+        max(t.despacho_fin) as despacho_fin,
+        max(t.corte_dintel_inicio) as corte_dintel_inicio,
+        max(t.corte_dintel_fin) as corte_dintel_fin,
+        max(t.plegado_dintel_inicio) as plegado_dintel_inicio,
+        max(t.plegado_dintel_fin) as plegado_dintel_fin,
+        max(t.armado_dintel_inicio) as armado_dintel_inicio,
+        max(t.armado_dintel_fin) as armado_dintel_fin
 
       from public.portones p
       left join (
@@ -282,7 +328,10 @@ router.get('/portones', async (_req, res) => {
           max(case when etapa = 'armado_hojas'::public.porton_etapa then estado end) as armado_hojas,
           max(case when etapa = 'armado_marco_piernas'::public.porton_etapa then estado end) as armado_marco_piernas,
           max(case when etapa = 'armado_final'::public.porton_etapa then estado end) as armado_final,
-          max(case when etapa = 'despacho'::public.porton_etapa then estado end) as despacho
+          max(case when etapa = 'despacho'::public.porton_etapa then estado end) as despacho,
+          max(case when etapa = 'corte_dintel'::public.porton_etapa then estado end) as corte_dintel,
+          max(case when etapa = 'plegado_dintel'::public.porton_etapa then estado end) as plegado_dintel,
+          max(case when etapa = 'armado_dintel'::public.porton_etapa then estado end) as armado_dintel
         from public.porton_etapas_estado
         group by porton_id
       ) e on e.porton_id = p.id
@@ -330,7 +379,13 @@ router.get('/portones', async (_req, res) => {
           max(case when etapa = 'armado_final'::public.porton_etapa then inicio end) as armado_final_inicio,
           max(case when etapa = 'armado_final'::public.porton_etapa then fin end) as armado_final_fin,
           max(case when etapa = 'despacho'::public.porton_etapa then inicio end) as despacho_inicio,
-          max(case when etapa = 'despacho'::public.porton_etapa then fin end) as despacho_fin
+          max(case when etapa = 'despacho'::public.porton_etapa then fin end) as despacho_fin,
+          max(case when etapa = 'corte_dintel'::public.porton_etapa then inicio end) as corte_dintel_inicio,
+          max(case when etapa = 'corte_dintel'::public.porton_etapa then fin end) as corte_dintel_fin,
+          max(case when etapa = 'plegado_dintel'::public.porton_etapa then inicio end) as plegado_dintel_inicio,
+          max(case when etapa = 'plegado_dintel'::public.porton_etapa then fin end) as plegado_dintel_fin,
+          max(case when etapa = 'armado_dintel'::public.porton_etapa then inicio end) as armado_dintel_inicio,
+          max(case when etapa = 'armado_dintel'::public.porton_etapa then fin end) as armado_dintel_fin
         from public.porton_etapas_tiempos
         group by porton_id
       ) t on t.porton_id = p.id

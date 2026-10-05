@@ -614,11 +614,14 @@ const ROUTES = [
       { key: 'laser_brazos_espada', label: 'Laser tubos Brazos y Espada', mode: 'porton' },
       { key: 'guillotina', label: 'Corte piernas', mode: 'porton' },
       { key: 'corte_revest', label: 'Corte revestimiento', mode: 'porton' },
+      { key: 'corte_dintel', label: 'Corte Dintel', mode: 'porton' },
       { key: 'guillotina', label: 'Corte Ipanel', mode: 'ipanel' },
       { key: 'plegadora', label: 'Plegado Piernas', mode: 'porton' },
       { key: 'plegado_revest', label: 'Plegado Revestimiento', mode: 'porton' },
+      { key: 'plegado_dintel', label: 'Plegado Dintel', mode: 'porton' },
       { key: 'plegado', label: 'Plegado Ipanel', mode: 'ipanel' },
       { key: 'armado_piernas', label: 'Prefabricados (Armado de piernas)', mode: 'porton' },
+      { key: 'armado_dintel', label: 'Armado Dintel', mode: 'porton' },
       { key: 'armado_marco_piernas', label: 'Armado de marcos piernas', mode: 'porton' },
       { key: 'armado_hojas', label: 'Armado de hoja', mode: 'porton' },
       { key: 'armado_primario', label: 'Armado Primario', mode: 'porton' },
@@ -658,6 +661,7 @@ const ROUTES = [
     stages: [
       { key: 'guillotina', label: 'Corte piernas', mode: 'porton' },
       { key: 'corte_revest', label: 'Corte revestimiento', mode: 'porton' },
+      { key: 'corte_dintel', label: 'Corte Dintel', mode: 'porton' },
       { key: 'guillotina', label: 'Corte Ipanel', mode: 'ipanel' },
     ],
   },
@@ -667,6 +671,7 @@ const ROUTES = [
     stages: [
       { key: 'plegadora', label: 'Plegado Piernas', mode: 'porton' },
       { key: 'plegado_revest', label: 'Plegado Revestimiento', mode: 'porton' },
+      { key: 'plegado_dintel', label: 'Plegado Dintel', mode: 'porton' },
       { key: 'plegado', label: 'Plegado Ipanel', mode: 'ipanel' },
     ],
   },
@@ -675,6 +680,7 @@ const ROUTES = [
     label: 'Producción · Prefabricados / Armado',
     stages: [
       { key: 'armado_piernas', label: 'Prefabricados (Armado de piernas)', mode: 'porton' },
+      { key: 'armado_dintel', label: 'Armado Dintel', mode: 'porton' },
       { key: 'armado_marco_piernas', label: 'Armado de marcos piernas', mode: 'porton' },
       { key: 'armado_hojas', label: 'Armado de hoja', mode: 'porton' },
     ],

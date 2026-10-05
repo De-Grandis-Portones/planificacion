@@ -192,8 +192,11 @@ const BASE_SQL = `
         WHEN 'inyeccion'             THEN 7
         WHEN 'armado_primario'       THEN 6
         WHEN 'armado_piernas'        THEN 5
+        WHEN 'armado_dintel'         THEN 5
         WHEN 'plegadora'             THEN 4
+        WHEN 'plegado_dintel'        THEN 4
         WHEN 'guillotina'            THEN 3
+        WHEN 'corte_dintel'          THEN 3
         WHEN 'laser'                 THEN 2
         WHEN 'laser_dintel'          THEN 2
         WHEN 'laser_hojas'           THEN 2

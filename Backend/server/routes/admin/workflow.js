@@ -55,6 +55,11 @@ router.get('/workflow/condition-fields', async (req, res) => {
 
     if (line === 'portones') {
       base.push({ key: 'nv', label: 'nv' });
+      // Campo calculado (no es una key real de preproduccion_valores.data):
+      // ver toMmHeuristic + ancho_mm_normalizado en portones.js/qc.js. Sirve
+      // para condicionar edges/requirements por ancho sin pelearse con que
+      // el dato real viene mezclado en mm o en metros según el formulario.
+      base.push({ key: 'ancho_mm_normalizado', label: 'Ancho (mm, normalizado)' });
       const q = await pool.query(
         `
         with sample as (

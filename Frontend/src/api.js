@@ -828,13 +828,13 @@ export const deleteReunion = (id) => api.delete(`/admin/reuniones/${id}`);
 export const fetchProgramadoresChat = (params) => api.get('/admin/programadores/chat/mensajes', { params });
 // clienteId: id temporal de la burbuja "enviando" (vuelve en la respuesta y
 // en el evento en tiempo real). onProgreso(0-100): avance de la subida.
-export function enviarProgramadoresChat({ texto, archivos = [], respondeAId, clienteId, onProgreso }) {
+function postMensajeChat(url, { texto, archivos = [], respondeAId, clienteId, onProgreso }) {
   const form = new FormData();
   if (texto) form.append('texto', texto);
   if (respondeAId) form.append('responde_a_id', String(respondeAId));
   if (clienteId) form.append('cliente_id', clienteId);
   for (const f of archivos) form.append('archivos', f);
-  return api.post('/admin/programadores/chat/mensajes', form, {
+  return api.post(url, form, {
     headers: { 'Content-Type': 'multipart/form-data' },
     timeout: 120000, // subir varios archivos grandes tarda más que los 30s por defecto
     onUploadProgress: onProgreso
@@ -842,6 +842,7 @@ export function enviarProgramadoresChat({ texto, archivos = [], respondeAId, cli
       : undefined,
   });
 }
+export const enviarProgramadoresChat = (payload) => postMensajeChat('/admin/programadores/chat/mensajes', payload);
 export const editarProgramadoresChat = (id, texto) => api.put(`/admin/programadores/chat/mensajes/${id}`, { texto });
 // Borrado lógico: queda "Este mensaje fue eliminado".
 export const eliminarProgramadoresChat = (id) => api.delete(`/admin/programadores/chat/mensajes/${id}`);
@@ -849,6 +850,31 @@ export const eliminarProgramadoresChat = (id) => api.delete(`/admin/programadore
 export const reaccionarProgramadoresChat = (id, emoji) => api.put(`/admin/programadores/chat/mensajes/${id}/reaccion`, { emoji });
 export const marcarProgramadoresChatLeido = (hastaId) => api.post('/admin/programadores/chat/leido', { hasta_id: hastaId });
 export const fetchProgramadoresChatNoLeidos = () => api.get('/admin/programadores/chat/no-leidos');
+
+/* ========= Proyectos de Programadores (/admin/programadores/proyectos) =========
+   Tarjetas con encargado e integrantes + un chat por proyecto solo para sus
+   integrantes (mismas rutas/respuestas que el Chat de Programadores, debajo
+   de /proyectos/:id). Ver Backend/server/routes/admin/programadoresProyectos.js. */
+export const fetchProyectosProgramadores = (params) => api.get('/admin/programadores/proyectos', { params });
+export const fetchProyectoProgramadores = (id) => api.get(`/admin/programadores/proyectos/${id}`);
+export const crearProyectoProgramadores = (payload) => api.post('/admin/programadores/proyectos', payload);
+export const actualizarProyectoProgramadores = (id, payload) => api.put(`/admin/programadores/proyectos/${id}`, payload);
+export const archivarProyectoProgramadores = (id, archivado) => api.put(`/admin/programadores/proyectos/${id}/archivo`, { archivado });
+export const fetchProyectosProgramadoresNoLeidos = () => api.get('/admin/programadores/proyectos/no-leidos');
+
+// Las mismas 6 operaciones que usa el Chat de Programadores, para un proyecto
+// (es lo que recibe ChatSala como `api`).
+export function apiChatProyecto(id) {
+  const base = `/admin/programadores/proyectos/${id}`;
+  return {
+    listar: (params) => api.get(`${base}/mensajes`, { params }),
+    enviar: (payload) => postMensajeChat(`${base}/mensajes`, payload),
+    editar: (mid, texto) => api.put(`${base}/mensajes/${mid}`, { texto }),
+    eliminar: (mid) => api.delete(`${base}/mensajes/${mid}`),
+    reaccionar: (mid, emoji) => api.put(`${base}/mensajes/${mid}/reaccion`, { emoji }),
+    marcarLeido: (hastaId) => api.post(`${base}/leido`, { hasta_id: hastaId }),
+  };
+}
 
 /* ========= Logística de Viajes (despacho + instalación por semana, desde /a) =========
    Arma "viajes" (fecha + zona + cuadrilla + vehículo) por semana ISO y reparte en

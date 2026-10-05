@@ -1,11 +1,12 @@
 // src/components/chatProgramadores/ChatComposer.jsx — barra para escribir del
-// Chat de Programadores: texto que crece, emojis, adjuntos (📎 o Ctrl+V),
+// Chat de Programadores: texto que crece, emojis, adjuntos (clip o Ctrl+V),
 // autocompletado de @menciones y las barras de "Respondiendo a…" /
 // "Editando mensaje". El envío en sí lo resuelve la página.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { colorForUsername } from '../../utils/userAvatar';
 import { CitaMensaje } from './ChatBurbuja';
-import { C, EMOJIS, iconoArchivo } from './chatComun';
+import { C, EMOJIS } from './chatComun';
+import { BadgeArchivo, IconoCarita, IconoClip, IconoEnviar } from './IconosChat';
 
 const botonIcono = {
   background: 'none', border: 'none', cursor: 'pointer', fontSize: 22, lineHeight: 1,
@@ -141,7 +142,7 @@ export default function ChatComposer({
   return (
     <>
       {editando && (
-        <BarraContexto titulo="✏️ Editando mensaje" onCerrar={onCancelarEdicion}>
+        <BarraContexto titulo="Editando mensaje" onCerrar={onCancelarEdicion}>
           <div style={{ fontSize: 12.5, color: C.suave, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {editando.texto}
           </div>
@@ -161,7 +162,7 @@ export default function ChatComposer({
                 <img src={p.previewUrl} alt={p.file.name} title={p.file.name} style={{ height: 64, width: 64, objectFit: 'cover', borderRadius: 6, display: 'block' }} />
               ) : (
                 <div title={p.file.name} style={{ height: 64, width: 120, borderRadius: 6, background: '#fff', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 4, gap: 2 }}>
-                  <span style={{ fontSize: 22 }}>{iconoArchivo(p.file.name)}</span>
+                  <BadgeArchivo nombre={p.file.name} size={24} />
                   <span style={{ fontSize: 10, maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.file.name}</span>
                 </div>
               )}
@@ -204,7 +205,7 @@ export default function ChatComposer({
           </div>
         )}
         <div ref={emojiRef} style={{ position: 'relative' }}>
-          <button type="button" style={botonIcono} onClick={() => setMostrarEmojis((v) => !v)} title="Emojis">😊</button>
+          <button type="button" style={botonIcono} onClick={() => setMostrarEmojis((v) => !v)} title="Emojis"><IconoCarita /></button>
           {mostrarEmojis && (
             <div
               style={{
@@ -232,7 +233,7 @@ export default function ChatComposer({
           onClick={() => fileInputRef.current?.click()}
           title="Adjuntar imágenes o archivos"
         >
-          📎
+          <IconoClip />
         </button>
         <input
           ref={fileInputRef}
@@ -269,7 +270,7 @@ export default function ChatComposer({
             cursor: puedeEnviar ? 'pointer' : 'default', fontSize: 18,
           }}
         >
-          {editando ? '✓' : '➤'}
+          {editando ? '✓' : <span style={{ display: 'inline-flex', marginLeft: -2 }}><IconoEnviar size={20} /></span>}
         </button>
       </div>
     </>

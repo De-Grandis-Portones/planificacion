@@ -31,6 +31,8 @@ import SchedulingRulesPage from '../pages/admin/SchedulingRulesPage';
 import SchedulingGanttPage from '../pages/admin/SchedulingGanttPage';
 import SchedulingRulesNavPage from '../pages/admin/SchedulingRulesNavPage';
 import ProgramadoresChatPage from '../pages/admin/ProgramadoresChatPage';
+import ProgramadoresProyectosPage from '../pages/admin/ProgramadoresProyectosPage';
+import ProgramadoresProyectoPage from '../pages/admin/ProgramadoresProyectoPage';
 import AdminQcPage from '../pages/admin/AdminQcPage';
 import AdminExcelInfoPage from '../pages/admin/AdminExcelInfoPage';
 import PrefabricadosConfigPage from '../pages/admin/PrefabricadosConfigPage';
@@ -751,6 +753,8 @@ export default function App() {
           <Route path="/admin/scheduling/gantt" element={<SchedulingGanttPage />} />
           <Route path="/admin/scheduling/reglas" element={<SchedulingRulesNavPage />} />
           <Route path="/admin/programadores/chat" element={<ProgramadoresChatPage />} />
+          <Route path="/admin/programadores/proyectos" element={<ProgramadoresProyectosPage />} />
+          <Route path="/admin/programadores/proyectos/:id" element={<ProgramadoresProyectoPage />} />
           <Route path="/admin/excel-info" element={<AdminExcelInfoPage />} />
           <Route path="/admin/portones-instalados" element={<PortonesInstaladosPage />} />
           <Route path="/admin/prefabricados" element={<PrefabricadosConfigPage />} />

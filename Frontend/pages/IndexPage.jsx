@@ -200,6 +200,7 @@ export default function IndexPage({ routes = [] }) {
     if (!(isQcAdmin || isWfAdmin)) return [];
     return [
       { path: '/board', label: 'Producción · Tablero completo' },
+      { path: '/diseno_v2', label: 'Producción · Diseño v2 (Beta)' },
       ...routes
         .filter((r) => r?.path && r.path !== '/board')
         .map((r) => ({ path: r.path, label: r.label })),

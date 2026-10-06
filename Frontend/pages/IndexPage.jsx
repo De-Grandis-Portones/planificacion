@@ -183,6 +183,7 @@ export default function IndexPage({ routes = [] }) {
       { path: '/admin/scheduling', label: 'Admin · Motor de Reglas de Tiempo (Beta)' },
       { path: '/admin/scheduling/reglas', label: 'Admin · Reglas de Desvío (Beta)' },
       { path: '/admin/scheduling/gantt', label: 'Admin · Gantt de Producción (Beta)' },
+      { path: '/diseno_v2', label: 'Admin · Diseño v2 (Beta)' },
       {
         path: '/admin/tickets', label: 'Admin · Tickets', badge: pendingTicketsCount,
         badgeTitle: `${pendingTicketsCount} ticket${pendingTicketsCount === 1 ? '' : 's'} pendiente${pendingTicketsCount === 1 ? '' : 's'}`,
@@ -200,7 +201,6 @@ export default function IndexPage({ routes = [] }) {
     if (!(isQcAdmin || isWfAdmin)) return [];
     return [
       { path: '/board', label: 'Producción · Tablero completo' },
-      { path: '/diseno_v2', label: 'Producción · Diseño v2 (Beta)' },
       ...routes
         .filter((r) => r?.path && r.path !== '/board')
         .map((r) => ({ path: r.path, label: r.label })),

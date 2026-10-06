@@ -2,7 +2,8 @@
 //
 // /diseno_v2 - nueva pantalla de Diseño, pensada para reemplazar en el futuro
 // a /diseno (por ahora conviven, se desarrolla en paralelo - no tocar
-// /diseno). Pública como /diseno (sin login).
+// /diseno). Mientras está en Beta es solo para el scope programadores:admin
+// (sección Programadores del índice), no pública como /diseno.
 //
 // Trabaja por lote = semana de producción (la misma que se carga en /a y que
 // el tablero muestra como "Producción: Semana N° X"). Para el lote elegido
@@ -11,8 +12,10 @@
 // (public/diseno-v2/portones_v6.html, hecha aparte), que corre embebida en un
 // iframe y genera los DXF, Excel, PDF y órdenes de trabajo de la semana.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import usePortones from '../src/hooks/usePortones';
+import { getAdminToken } from '../src/api';
+import { getCurrentScopes, hasAny } from '../src/utils/adminScopes';
 import {
   toISODate10, isoWeekLabelFromDate, weekNumberFromLabel, isoWeekStartEndFromLabel,
   formatDMY, todayISO10,
@@ -23,6 +26,7 @@ import {
 
 const BRAND = '#0a6a33';
 const HERRAMIENTA_URL = '/diseno-v2/portones_v6.html';
+const SCOPE_REQUERIDO = 'programadores:admin';
 
 const ETAPAS_DISENO = [
   { key: 'diseno', label: 'Tubos' },
@@ -82,7 +86,32 @@ function BadgeEstado({ estado }) {
   );
 }
 
+// Sin sesión de admin -> login; con sesión pero sin el scope -> aviso (y no
+// se carga nada).
 export default function DisenoV2Page() {
+  const nav = useNavigate();
+  const token = String(getAdminToken() || '').trim();
+  const conAcceso = !!token && hasAny(getCurrentScopes(), [SCOPE_REQUERIDO]);
+
+  useEffect(() => {
+    if (!token) nav('/admin/login', { replace: true });
+  }, [token, nav]);
+
+  if (!token) return null;
+  if (!conAcceso) {
+    return (
+      <div style={{ padding: 24, fontFamily: 'system-ui, sans-serif' }}>
+        <p>
+          No tenés acceso a Diseño v2 (Beta): es solo para usuarios con el permiso <b>{SCOPE_REQUERIDO}</b>.
+        </p>
+        <Link to="/index">← Volver al inicio</Link>
+      </div>
+    );
+  }
+  return <DisenoV2 />;
+}
+
+function DisenoV2() {
   const { data: portones, loading, err, refresh, refreshing } = usePortones({ pollMs: 300000 });
 
   // ---- lotes (semanas de producción) ----
@@ -224,8 +253,9 @@ export default function DisenoV2Page() {
         <button type="button" onClick={refresh} disabled={refreshing} style={{ ...btn(false), padding: '6px 10px' }}>
           {refreshing ? 'Actualizando…' : '↻ Actualizar'}
         </button>
-        <span style={{ marginLeft: 'auto' }}>
+        <span style={{ marginLeft: 'auto', display: 'flex', gap: 16 }}>
           <Link to="/diseno" style={{ color: '#fff' }}>Ir a /diseno (actual)</Link>
+          <Link to="/index" style={{ color: '#fff' }}>Menú</Link>
         </span>
       </header>
 

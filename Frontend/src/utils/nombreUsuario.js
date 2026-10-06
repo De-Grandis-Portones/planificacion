@@ -10,3 +10,9 @@ export function nombreConUsuario(nombre, usuario) {
   if (!u || n.toLowerCase() === u.toLowerCase()) return n;
   return `${n} (${u})`;
 }
+
+// "Diego, Vos" - quiénes avisaron "No la voy a hacer" (ticket.no_la_hacen),
+// para la línea corta de las tarjetas del tablero y de la lista.
+export function nombresNoLaHacen(lista, miUsername) {
+  return (lista || []).map((d) => (d.username === miUsername ? 'Vos' : (d.nombre || d.username))).join(', ');
+}

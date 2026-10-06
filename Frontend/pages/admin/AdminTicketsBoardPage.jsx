@@ -31,7 +31,9 @@ import {
 } from '../../src/api';
 import AdminTicketDetailModal, { APP_LABEL, ESTADO_COLOR } from '../../src/components/AdminTicketDetailModal';
 import UserAvatar from '../../src/components/UserAvatar';
-import { nombreConUsuario } from '../../src/utils/nombreUsuario';
+import { nombreConUsuario, nombresNoLaHacen } from '../../src/utils/nombreUsuario';
+import { getCurrentAdminUsername } from '../../src/utils/adminScopes';
+import { leerSoloMisTareas, guardarSoloMisTareas } from '../../src/utils/soloMisTareas';
 
 const CLOSED_COL = '__closed';
 const TAREAS_COL = 'tarea';
@@ -103,6 +105,11 @@ export default function AdminTicketsBoardPage() {
   const panRef = useRef({ startX: 0, startScrollLeft: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [busqueda, setBusqueda] = useState('');
+  // "Solo mis tareas": solo las tarjetas que tengo asignadas (en_progreso_por).
+  // Mis tarjetas se marcan siempre, con el filtro prendido o no.
+  const miUsername = useMemo(() => getCurrentAdminUsername() || '', []);
+  const [soloMias, setSoloMias] = useState(leerSoloMisTareas);
+  useEffect(() => { guardarSoloMisTareas(soloMias); }, [soloMias]);
 
   const logout = () => {
     clearAdminToken();
@@ -242,6 +249,7 @@ export default function AdminTicketsBoardPage() {
     map[CLOSED_COL] = [];
     for (const t of tickets) {
       if (!coincideBusqueda(t)) continue;
+      if (soloMias && t.en_progreso_por !== miUsername) continue;
       if (t.estado === 'closed') {
         map[CLOSED_COL].push(t);
       } else {
@@ -253,7 +261,13 @@ export default function AdminTicketsBoardPage() {
       map[key].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     }
     return map;
-  }, [tickets, columnas, busquedaNormalizada]);
+  }, [tickets, columnas, busquedaNormalizada, soloMias, miUsername]);
+
+  // Las que tengo asignadas y siguen abiertas (el número del botón).
+  const misTareasCount = useMemo(
+    () => tickets.filter((t) => t.en_progreso_por === miUsername && t.estado !== 'closed').length,
+    [tickets, miUsername]
+  );
 
   const totalCoincidencias = useMemo(
     () => Object.values(porColumna).reduce((sum, arr) => sum + arr.length, 0),
@@ -367,18 +381,27 @@ export default function AdminTicketsBoardPage() {
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, maxWidth: 340 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
         <input
           type="text"
           value={busqueda}
           onChange={(e) => setBusqueda(e.target.value)}
           placeholder="Buscar en el tablero..."
-          style={{ flex: 1, padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 13 }}
+          style={{ flex: '0 1 300px', minWidth: 180, padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 13 }}
         />
         {busqueda && (
           <button type="button" className="btn" onClick={() => setBusqueda('')} title="Limpiar búsqueda">×</button>
         )}
-        {busquedaNormalizada && (
+        <button
+          type="button"
+          className={soloMias ? 'btn btn--brand' : 'btn'}
+          aria-pressed={soloMias}
+          onClick={() => setSoloMias((v) => !v)}
+          title={soloMias ? 'Volver a ver todas las tarjetas' : 'Ver solo los tickets y tareas que tenés asignados'}
+        >
+          Solo mis tareas{misTareasCount ? ` (${misTareasCount})` : ''}
+        </button>
+        {(busquedaNormalizada || soloMias) && (
           <span style={{ fontSize: 12, color: 'var(--ink-weak)', whiteSpace: 'nowrap' }}>
             {totalCoincidencias} resultado{totalCoincidencias === 1 ? '' : 's'}
           </span>
@@ -476,7 +499,7 @@ export default function AdminTicketsBoardPage() {
 
               <div style={{ padding: 8, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {items.length === 0 && (
-                  busquedaNormalizada ? (
+                  busquedaNormalizada || soloMias ? (
                     <div style={{ fontSize: 12, color: 'var(--ink-weak)', textAlign: 'center', padding: '14px 0' }}>
                       Sin resultados
                     </div>
@@ -487,7 +510,9 @@ export default function AdminTicketsBoardPage() {
                     </div>
                   )
                 )}
-                {items.map((t) => (
+                {items.map((t) => {
+                  const esMia = !!miUsername && t.en_progreso_por === miUsername;
+                  return (
                   <div
                     key={t.id}
                     draggable
@@ -496,10 +521,10 @@ export default function AdminTicketsBoardPage() {
                     onClick={() => setSeleccionadoId(t.id)}
                     title={t.estado === 'in_progress' ? 'En curso · arrastrar para cambiar de columna · clic para ver todo' : 'Arrastrar para cambiar de columna · clic para ver todo'}
                     style={{
-                      border: '1px solid var(--border)',
+                      border: `1px solid ${esMia ? 'var(--brand)' : 'var(--border)'}`,
                       borderLeft: `4px solid ${ESTADO_COLOR[t.estado] || 'var(--border)'}`,
                       borderRadius: 8, padding: 8,
-                      background: 'var(--surface)', cursor: 'grab',
+                      background: esMia ? 'var(--brand-100)' : 'var(--surface)', cursor: 'grab',
                       boxShadow: '0 1px 2px rgba(15,23,42,.08)',
                     }}
                   >
@@ -526,12 +551,22 @@ export default function AdminTicketsBoardPage() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 4 }}>
                         <UserAvatar username={t.en_progreso_por} name={t.en_progreso_por_nombre} size={16} />
                         <span style={{ fontSize: 10, color: t.estado === 'in_progress' ? ESTADO_COLOR.in_progress : 'var(--ink-weak)', fontWeight: 700 }}>
+                          {esMia && <span style={{ color: 'var(--brand-700)' }}>Vos · </span>}
                           {t.estado === 'closed' ? 'Resuelto' : t.estado === 'in_progress' ? 'En curso' : 'Asignado'}
                         </span>
                       </div>
                     )}
+                    {t.no_la_hacen?.length > 0 && (
+                      <div
+                        title={t.no_la_hacen.map((d) => `${d.nombre || d.username}${d.motivo ? `: ${d.motivo}` : ''}`).join('\n')}
+                        style={{ fontSize: 10, color: '#b3261e', marginTop: 4, fontWeight: 600 }}
+                      >
+                        No la {t.no_la_hacen.length === 1 ? 'hace' : 'hacen'}: {nombresNoLaHacen(t.no_la_hacen, miUsername)}
+                      </div>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
 
                 {esColumnaManual(colKey) && (
                   nuevaTareaColAbierta === colKey ? (

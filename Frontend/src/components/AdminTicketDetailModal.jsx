@@ -10,6 +10,8 @@ import {
   updateTicketStatus,
   assignTicketToMe,
   unassignTicket,
+  declinarTicket,
+  retirarDeclinacionTicket,
   deleteAdminTicket,
 } from '../api';
 import BaseModal from './modals/BaseModal';
@@ -48,6 +50,17 @@ export const APP_LABEL = {
   tarea: 'Tareas',
 };
 
+// Lo que cambia en un ticket cuando alguien se asigna, cambia el estado o
+// avisa que no lo hace: es lo que el modal le pasa a la lista/tablero.
+function camposDeAsignacion(t, anterior) {
+  return {
+    estado: t?.estado ?? anterior?.estado,
+    en_progreso_por: t ? t.en_progreso_por ?? null : anterior?.en_progreso_por ?? null,
+    en_progreso_por_nombre: t ? t.en_progreso_por_nombre ?? null : anterior?.en_progreso_por_nombre ?? null,
+    no_la_hacen: t?.no_la_hacen ?? anterior?.no_la_hacen ?? [],
+  };
+}
+
 // `ticketId` en null cierra el modal. `onTicketChanged(patch)` se llama con
 // `{ id, estado?, updated_at? }` cada vez que algo cambió acá adentro, para
 // que quien nos usa (la lista o el tablero) pueda parchear su propio estado
@@ -61,6 +74,10 @@ export default function AdminTicketDetailModal({ ticketId, onClose, onTicketChan
   const [enviandoRespuesta, setEnviandoRespuesta] = useState(false);
   const [cambiandoEstado, setCambiandoEstado] = useState(false);
   const [asignando, setAsignando] = useState(false);
+  const [declinarAbierto, setDeclinarAbierto] = useState(false);
+  const [motivoDeclinar, setMotivoDeclinar] = useState('');
+  const [declinando, setDeclinando] = useState(false);
+  const [errorDeclinar, setErrorDeclinar] = useState('');
   const [confirmandoBorrar, setConfirmandoBorrar] = useState(false);
   const [borrando, setBorrando] = useState(false);
   const miUsername = getCurrentAdminUsername();
@@ -72,6 +89,9 @@ export default function AdminTicketDetailModal({ ticketId, onClose, onTicketChan
     }
     setRespuesta('');
     setConfirmandoBorrar(false);
+    setDeclinarAbierto(false);
+    setMotivoDeclinar('');
+    setErrorDeclinar('');
     cargar(ticketId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticketId]);
@@ -111,15 +131,11 @@ export default function AdminTicketDetailModal({ ticketId, onClose, onTicketChan
     setCambiandoEstado(true);
     try {
       const { data } = await updateTicketStatus(ticket.id, nuevoEstado);
-      const actualizado = data?.ticket;
-      const estadoFinal = actualizado?.estado || nuevoEstado;
       // El backend ya decide qué hacer con en_progreso_por según el estado
       // (lo pisa con quien lo puso "En curso", lo limpia si vuelve a
       // "Pendiente", lo deja igual si se cierra) - simplemente reflejamos lo
       // que devolvió, no lo calculamos acá.
-      const enProgresoPor = actualizado ? actualizado.en_progreso_por : ticket.en_progreso_por;
-      const enProgresoPorNombre = actualizado ? actualizado.en_progreso_por_nombre : ticket.en_progreso_por_nombre;
-      const cambios = { estado: estadoFinal, en_progreso_por: enProgresoPor, en_progreso_por_nombre: enProgresoPorNombre };
+      const cambios = camposDeAsignacion(data?.ticket, { ...ticket, estado: nuevoEstado });
       setTicket((prev) => (prev ? { ...prev, ...cambios } : prev));
       onTicketChanged?.({ id: ticket.id, ...cambios });
     } catch (err) {
@@ -137,16 +153,37 @@ export default function AdminTicketDetailModal({ ticketId, onClose, onTicketChan
     setAsignando(true);
     try {
       const { data } = accion === 'liberar' ? await unassignTicket(ticket.id) : await assignTicketToMe(ticket.id);
-      const cambios = {
-        en_progreso_por: data?.ticket?.en_progreso_por ?? null,
-        en_progreso_por_nombre: data?.ticket?.en_progreso_por_nombre ?? null,
-      };
+      // Asignarse retira el "No la voy a hacer" propio (lo hace el backend).
+      const cambios = camposDeAsignacion(data?.ticket, ticket);
       setTicket((prev) => (prev ? { ...prev, ...cambios } : prev));
       onTicketChanged?.({ id: ticket.id, ...cambios });
     } catch (err) {
       console.error('Error asignando el ticket:', err);
     } finally {
       setAsignando(false);
+    }
+  }
+
+  // "No la voy a hacer" (con motivo opcional) / "Deshacer". Si era
+  // yo el asignado, el backend además me quita (y si estaba "En curso" por
+  // mí, vuelve a "Pendiente").
+  async function cambiarDeclinacion(accion) {
+    if (!ticket) return;
+    setDeclinando(true);
+    setErrorDeclinar('');
+    try {
+      const { data } = accion === 'retirar'
+        ? await retirarDeclinacionTicket(ticket.id)
+        : await declinarTicket(ticket.id, motivoDeclinar.trim());
+      const cambios = camposDeAsignacion(data?.ticket, ticket);
+      setTicket((prev) => (prev ? { ...prev, ...cambios } : prev));
+      onTicketChanged?.({ id: ticket.id, ...cambios });
+      setDeclinarAbierto(false);
+      setMotivoDeclinar('');
+    } catch (err) {
+      setErrorDeclinar(err?.response?.data?.error || 'No se pudo guardar el aviso');
+    } finally {
+      setDeclinando(false);
     }
   }
 
@@ -165,6 +202,9 @@ export default function AdminTicketDetailModal({ ticketId, onClose, onTicketChan
       setConfirmandoBorrar(false);
     }
   }
+
+  const noLaHacen = ticket?.no_la_hacen || [];
+  const yaDecline = noLaHacen.some((d) => d.username === miUsername);
 
   return (
     <BaseModal
@@ -210,7 +250,82 @@ export default function AdminTicketDetailModal({ ticketId, onClose, onTicketChan
                 {asignando ? '...' : (ticket.en_progreso_por ? 'Tomar' : 'Asignarme')}
               </button>
             )}
+            {yaDecline ? (
+              <button
+                type="button"
+                className="btn"
+                disabled={declinando}
+                onClick={() => cambiarDeclinacion('retirar')}
+                title="Sacar tu «No la voy a hacer» de este ticket"
+              >
+                {declinando ? '...' : 'Deshacer «No la voy a hacer»'}
+              </button>
+            ) : ticket.estado !== 'closed' && !declinarAbierto && (
+              <button
+                type="button"
+                className="btn pp-btn--danger"
+                onClick={() => setDeclinarAbierto(true)}
+                title="Dejar a la vista que no te vas a encargar de esto (no le avisa a nadie)"
+              >
+                No la voy a hacer
+              </button>
+            )}
           </div>
+
+          {declinarAbierto && (
+            <div
+              style={{
+                display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12, padding: 10,
+                border: '1px solid #f3c1bc', borderRadius: 8, background: '#fdf3f2',
+              }}
+            >
+              <div style={{ fontSize: 13, fontWeight: 700 }}>
+                No la voy a hacer
+                <span style={{ fontWeight: 400, color: 'var(--ink-weak)' }}>
+                  {' · '}queda a la vista en el ticket, no le llega aviso a nadie
+                  {ticket.en_progreso_por === miUsername ? ' · te vas a quitar de este ticket' : ''}
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <input
+                  autoFocus
+                  value={motivoDeclinar}
+                  maxLength={300}
+                  onChange={(e) => setMotivoDeclinar(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') cambiarDeclinacion('declinar');
+                    if (e.key === 'Escape') setDeclinarAbierto(false);
+                  }}
+                  placeholder="¿Por qué? (opcional) Ej: no es de mi área, no llego esta semana…"
+                  style={{ flex: '1 1 240px', padding: 8, borderRadius: 8, border: '1px solid var(--border)' }}
+                />
+                <button type="button" className="btn btn--brand" disabled={declinando} onClick={() => cambiarDeclinacion('declinar')}>
+                  {declinando ? 'Guardando...' : 'Confirmar'}
+                </button>
+                <button type="button" className="btn" disabled={declinando} onClick={() => setDeclinarAbierto(false)}>
+                  Cancelar
+                </button>
+              </div>
+              {errorDeclinar && <div style={{ fontSize: 12, color: '#b3261e' }}>{errorDeclinar}</div>}
+            </div>
+          )}
+
+          {noLaHacen.length > 0 && (
+            <div style={{ marginBottom: 12, padding: '8px 10px', borderRadius: 8, background: '#fdf3f2', border: '1px solid #f3c1bc' }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#b3261e', marginBottom: 4 }}>
+                No la {noLaHacen.length === 1 ? 'va' : 'van'} a hacer
+              </div>
+              {noLaHacen.map((d) => (
+                <div key={d.username} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, flexWrap: 'wrap', padding: '2px 0' }}>
+                  <UserAvatar username={d.username} name={d.nombre} size={18} />
+                  <strong>{d.username === miUsername ? 'Vos' : (d.nombre || d.username)}</strong>
+                  {d.motivo && <span style={{ color: 'var(--ink-weak)' }}>— “{d.motivo}”</span>}
+                  <span style={{ fontSize: 11, color: 'var(--ink-weak)' }}>· {new Date(d.created_at).toLocaleDateString()}</span>
+                </div>
+              ))}
+              {errorDeclinar && !declinarAbierto && <div style={{ fontSize: 12, color: '#b3261e' }}>{errorDeclinar}</div>}
+            </div>
+          )}
 
           <div style={{ fontSize: 14, whiteSpace: 'pre-wrap', marginBottom: 12 }}>{ticket.mensaje}</div>
 

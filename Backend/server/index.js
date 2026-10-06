@@ -866,6 +866,77 @@ const MIGRATIONS = [
       ALTER TABLE public.tickets ADD COLUMN IF NOT EXISTS titulo TEXT;
     `,
   },
+  {
+    // "No la voy a hacer" en Tickets (pedido explícito 2026-10-05): al lado
+    // de "Asignarme", cada admin puede avisar que no se va a encargar de un
+    // ticket/tarea, con un motivo opcional. Una fila por ticket y persona;
+    // "deshacer" no borra, marca retirado_at. Tabla aparte (no una
+    // columna en tickets, que comparten las 6 apps); ON DELETE CASCADE
+    // porque los tickets sí se pueden borrar (deleteTicketAdmin/deleteOwnTicket).
+    name: 'ticket_declinaciones',
+    sql: `
+      CREATE TABLE IF NOT EXISTS public.ticket_declinaciones (
+        ticket_id INTEGER NOT NULL REFERENCES public.tickets(id) ON DELETE CASCADE,
+        username TEXT NOT NULL,
+        motivo TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        retirado_at TIMESTAMPTZ,
+        PRIMARY KEY (ticket_id, username)
+      );
+    `,
+  },
+  {
+    // Proyectos de la sección Programadores (/admin/programadores/proyectos,
+    // pedido explícito 2026-10-05): tarjetas con encargado e integrantes
+    // (TEXT[] de usernames de admin_users) y un chat por proyecto solo para
+    // sus integrantes. Misma mecánica que el Chat de Programadores (borrado
+    // lógico, reacción quitada = emoji NULL, lecturas por usuario) pero en
+    // tablas propias. Un proyecto no se borra: se archiva (archivado_at).
+    name: 'programadores_proyectos',
+    sql: `
+      CREATE TABLE IF NOT EXISTS public.programadores_proyectos (
+        id SERIAL PRIMARY KEY,
+        nombre TEXT NOT NULL,
+        descripcion TEXT,
+        estado TEXT NOT NULL DEFAULT 'en_curso',
+        encargado_username TEXT NOT NULL,
+        integrantes TEXT[] NOT NULL DEFAULT '{}',
+        creado_por TEXT,
+        archivado_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE TABLE IF NOT EXISTS public.programadores_proyectos_mensajes (
+        id BIGSERIAL PRIMARY KEY,
+        proyecto_id INTEGER NOT NULL REFERENCES public.programadores_proyectos(id),
+        autor_id TEXT,
+        autor_username TEXT NOT NULL,
+        texto TEXT,
+        adjuntos JSONB NOT NULL DEFAULT '[]'::jsonb,
+        responde_a_id BIGINT REFERENCES public.programadores_proyectos_mensajes(id),
+        editado_at TIMESTAMPTZ,
+        eliminado_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_programadores_proyectos_mensajes_proyecto ON public.programadores_proyectos_mensajes(proyecto_id, id);
+      CREATE INDEX IF NOT EXISTS idx_programadores_proyectos_mensajes_updated ON public.programadores_proyectos_mensajes(proyecto_id, updated_at);
+      CREATE TABLE IF NOT EXISTS public.programadores_proyectos_reacciones (
+        mensaje_id BIGINT NOT NULL REFERENCES public.programadores_proyectos_mensajes(id),
+        username TEXT NOT NULL,
+        emoji TEXT,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (mensaje_id, username)
+      );
+      CREATE TABLE IF NOT EXISTS public.programadores_proyectos_lecturas (
+        proyecto_id INTEGER NOT NULL REFERENCES public.programadores_proyectos(id),
+        username TEXT NOT NULL,
+        ultimo_leido_id BIGINT NOT NULL DEFAULT 0,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (proyecto_id, username)
+      );
+    `,
+  },
 ];
 
 async function runMigrations() {

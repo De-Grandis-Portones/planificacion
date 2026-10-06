@@ -9,6 +9,9 @@
 // - "(N)" en el título de la pestaña,
 // - notificación del sistema con la pestaña en segundo plano, si se dio
 //   permiso (se pide desde el encabezado del chat).
+// Por el mismo canal llegan los mensajes de los chats de proyectos donde uno
+// es integrante (eventos tipo 'proyecto'): esos también dan aviso emergente /
+// notificación, pero no suman al contador del grupo general.
 //
 // El canal (SSE, GET /admin/programadores/chat/stream) se abre solo con la
 // pestaña visible: los navegadores permiten ~6 conexiones abiertas por
@@ -16,11 +19,11 @@
 // pestaña oculta se cierra y se revisa el contador cada 30s.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { API_BASE_URL, getAdminToken, fetchProgramadoresChatNoLeidos } from '../../api';
+import { API_BASE_URL, getAdminToken, fetchProgramadoresChatNoLeidos, fetchProyectosProgramadoresNoLeidos } from '../../api';
 import { getCurrentAdminUsername } from '../../utils/adminScopes';
 import { colorForUsername } from '../../utils/userAvatar';
 import { ChatProgramadoresContext } from './chatContexto';
-import { RUTA_CHAT, puedeUsarChat, previewDe, resumenDe, mencionaA } from './chatComun';
+import { RUTA_CHAT, RUTA_PROYECTOS, rutaProyecto, puedeUsarChat, previewDe, resumenDe, mencionaA } from './chatComun';
 
 const POLL_OCULTO_MS = 30000;
 const REFRESCO_VISIBLE_MS = 60000;
@@ -38,12 +41,15 @@ export default function ChatProgramadoresProvider({ children }) {
   const { pathname } = useLocation();
   const enChatRef = useRef(false);
   enChatRef.current = pathname === RUTA_CHAT;
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
 
   const [noLeidos, setNoLeidos] = useState(0);
   const [conectado, setConectado] = useState(false);
   const [toasts, setToasts] = useState([]);
   const suscriptoresRef = useRef(new Set());
   const conteoRef = useRef(null); // último count conocido; null = todavía no hay línea de base
+  const conteoProyectosRef = useRef(null); // ídem, mensajes nuevos en mis proyectos (pestaña oculta)
 
   const suscribir = useCallback((fn) => {
     suscriptoresRef.current.add(fn);
@@ -65,13 +71,13 @@ export default function ChatProgramadoresProvider({ children }) {
 
   const quitarToast = useCallback((id) => setToasts((prev) => prev.filter((t) => t.id !== id)), []);
 
-  const notificarSistema = useCallback((titulo, cuerpo) => {
+  const notificarSistema = useCallback((titulo, cuerpo, ruta = RUTA_CHAT, tag = 'chat-programadores') => {
     if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
     try {
-      const n = new Notification(titulo, { body: cuerpo, tag: 'chat-programadores', icon: '/Favicon.ico' });
+      const n = new Notification(titulo, { body: cuerpo, tag, icon: '/Favicon.ico' });
       n.onclick = () => {
         window.focus();
-        nav(RUTA_CHAT);
+        nav(ruta);
         n.close();
       };
     } catch {
@@ -105,6 +111,43 @@ export default function ChatProgramadoresProvider({ children }) {
       }
     }
     if (ev.tipo === 'lectura' && ev.username === yo) refrescarNoLeidos();
+    if (ev.tipo === 'proyecto' && ev.evento?.tipo === 'mensaje' && ev.evento.mensaje && ev.evento.mensaje.autor_username !== yo) {
+      const ruta = rutaProyecto(ev.proyecto_id);
+      if (pathnameRef.current === ruta && !document.hidden) return; // lo está leyendo
+      const m = ev.evento.mensaje;
+      const nombre = ev.proyecto_nombre || 'Proyecto';
+      const mencion = mencionaA(m.texto, yo);
+      const preview = previewDe(resumenDe(m));
+      if (document.hidden) {
+        notificarSistema(mencion ? `${m.autor_username} te mencionó · ${nombre}` : `${m.autor_username} · ${nombre}`, preview, ruta, `proyecto-${ev.proyecto_id}`);
+      } else {
+        const id = `p${m.id}`;
+        setToasts((prev) => [...prev.filter((t) => t.id !== id), { id, autor: m.autor_username, preview, mencion, origen: `Proyecto · ${nombre}`, ruta }].slice(-MAX_TOASTS));
+        if (!mencion) setTimeout(() => quitarToast(id), TOAST_MS);
+      }
+    }
+  };
+
+  // Mensajes nuevos en mis proyectos con la pestaña oculta: al ocultarla se
+  // toma la línea de base y después se avisa si subió.
+  const revisarProyectosRef = useRef(null);
+  revisarProyectosRef.current = async (avisar) => {
+    try {
+      const { data } = await fetchProyectosProgramadoresNoLeidos();
+      const count = Number(data?.count) || 0;
+      const anterior = conteoProyectosRef.current;
+      conteoProyectosRef.current = count;
+      if (!avisar || anterior == null || count <= anterior) return;
+      const nuevos = count - anterior;
+      notificarSistema(
+        nuevos === 1 ? '1 mensaje nuevo en tus proyectos' : `${nuevos} mensajes nuevos en tus proyectos`,
+        'Programadores · Proyectos',
+        RUTA_PROYECTOS,
+        'proyectos-programadores'
+      );
+    } catch {
+      // se reintenta en el próximo ciclo
+    }
   };
 
   // Con la pestaña oculta (canal cerrado): si subió el contador, notificación del sistema.
@@ -186,7 +229,14 @@ export default function ChatProgramadoresProvider({ children }) {
       if (document.hidden) {
         controller?.abort();
         clearTimeout(reintento);
-        if (!pollOculto) pollOculto = setInterval(() => revisarEnSegundoPlanoRef.current(), POLL_OCULTO_MS);
+        conteoProyectosRef.current = null;
+        revisarProyectosRef.current(false);
+        if (!pollOculto) {
+          pollOculto = setInterval(() => {
+            revisarEnSegundoPlanoRef.current();
+            revisarProyectosRef.current(true);
+          }, POLL_OCULTO_MS);
+        }
       } else {
         clearInterval(pollOculto);
         pollOculto = null;
@@ -219,9 +269,12 @@ export default function ChatProgramadoresProvider({ children }) {
   }, [habilitado, noLeidos]);
   useEffect(() => () => { document.title = tituloSinContador(document.title); }, []);
 
-  // Al entrar al chat, los avisos emergentes ya no hacen falta.
+  // Al entrar al chat (o al proyecto), sus avisos emergentes ya no hacen falta.
   useEffect(() => {
-    if (pathname === RUTA_CHAT) setToasts([]);
+    setToasts((prev) => {
+      const quedan = prev.filter((t) => (t.ruta || RUTA_CHAT) !== pathname);
+      return quedan.length === prev.length ? prev : quedan;
+    });
   }, [pathname]);
 
   const valor = useMemo(
@@ -239,8 +292,8 @@ export default function ChatProgramadoresProvider({ children }) {
               key={t.id}
               role="button"
               tabIndex={0}
-              onClick={() => { quitarToast(t.id); nav(RUTA_CHAT); }}
-              onKeyDown={(e) => { if (e.key === 'Enter') { quitarToast(t.id); nav(RUTA_CHAT); } }}
+              onClick={() => { quitarToast(t.id); nav(t.ruta || RUTA_CHAT); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') { quitarToast(t.id); nav(t.ruta || RUTA_CHAT); } }}
               style={{
                 background: 'var(--surface, #fff)', border: '1px solid var(--border, #d1d5db)',
                 borderLeft: `4px solid ${t.mencion ? '#f59e0b' : 'var(--brand, #008241)'}`,
@@ -249,7 +302,7 @@ export default function ChatProgramadoresProvider({ children }) {
             >
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 11, opacity: 0.65 }}>💻 Programadores{t.mencion ? ' · te mencionó' : ''}</div>
+                  <div style={{ fontSize: 11, opacity: 0.65, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.origen || '💻 Programadores'}{t.mencion ? ' · te mencionó' : ''}</div>
                   <div style={{ fontWeight: 800, fontSize: 13, color: colorForUsername(t.autor), marginTop: 1 }}>{t.autor}</div>
                   <div style={{ fontSize: 12.5, opacity: 0.85, marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {t.preview}

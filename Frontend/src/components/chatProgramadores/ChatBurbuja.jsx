@@ -7,8 +7,9 @@ import UserAvatar from '../UserAvatar';
 import { colorForUsername } from '../../utils/userAvatar';
 import {
   C, MEDIA_MAX, REACCIONES_RAPIDAS, MENCION_RE,
-  extensionDe, formatBytes, formatHora, iconoArchivo, esImagen, previewDe,
+  extensionDe, formatBytes, formatHora, esImagen, previewDe,
 } from './chatComun';
+import { BadgeArchivo, IconoReloj } from './IconosChat';
 
 const URL_RE = /(https?:\/\/[^\s<]+)/g;
 
@@ -91,7 +92,7 @@ export function CitaMensaje({ c, yo, onClick }) {
 
 function Adjunto({ a, onMediaLoad }) {
   if (!a.url) {
-    return <div style={{ fontSize: 12, color: C.suave, fontStyle: 'italic' }}>📎 {a.nombre} (no disponible)</div>;
+    return <div style={{ fontSize: 12, color: C.suave, fontStyle: 'italic' }}>{a.nombre} (no disponible)</div>;
   }
   const tipo = String(a.tipo || '');
   const ext = extensionDe(a.nombre);
@@ -120,7 +121,7 @@ function ChipArchivo({ nombre, tamano, href }) {
   const ext = extensionDe(nombre);
   const contenido = (
     <>
-      <span style={{ fontSize: 26, lineHeight: 1 }}>{iconoArchivo(nombre)}</span>
+      <BadgeArchivo nombre={nombre} size={30} />
       <span style={{ minWidth: 0 }}>
         <div style={{ fontWeight: 600, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nombre}</div>
         <div style={{ fontSize: 11, color: C.suave }}>{formatBytes(tamano)}{ext ? ` · ${ext.toUpperCase()}` : ''}</div>
@@ -150,7 +151,7 @@ function Tildes({ m, lecturas, otrosMiembros }) {
   );
 }
 
-function Reacciones({ reacciones, yo, propio, onToggle }) {
+function Reacciones({ reacciones, yo, propio, onToggle, soloLectura }) {
   if (!reacciones?.length) return null;
   return (
     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: propio ? 'flex-end' : 'flex-start', marginTop: -6, padding: '0 8px', position: 'relative', zIndex: 1 }}>
@@ -161,11 +162,12 @@ function Reacciones({ reacciones, yo, propio, onToggle }) {
             key={r.emoji}
             type="button"
             onClick={() => onToggle(r.emoji)}
-            title={`${r.usernames.map((u) => (u === yo ? 'Vos' : u)).join(', ')}${mia ? ' · tocá para quitar la tuya' : ''}`}
+            disabled={soloLectura}
+            title={`${r.usernames.map((u) => (u === yo ? 'Vos' : u)).join(', ')}${mia && !soloLectura ? ' · tocá para quitar la tuya' : ''}`}
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 3, padding: '1px 7px', borderRadius: 999,
               border: `1px solid ${mia ? '#86c7a6' : '#e0e3e6'}`, background: mia ? '#e7f7ee' : '#fff',
-              boxShadow: '0 1px 1px rgba(11,20,26,.1)', cursor: 'pointer', fontSize: 13, lineHeight: 1.5,
+              boxShadow: '0 1px 1px rgba(11,20,26,.1)', cursor: soloLectura ? 'default' : 'pointer', fontSize: 13, lineHeight: 1.5,
             }}
           >
             <span>{r.emoji}</span>
@@ -177,7 +179,7 @@ function Reacciones({ reacciones, yo, propio, onToggle }) {
   );
 }
 
-function MenuAcciones({ m, propio, yo, arriba, anclaRef, onCerrar, onResponder, onReaccionar, onCopiar, onEditar, onEliminar }) {
+function MenuAcciones({ m, propio, yo, arriba, anclaRef, soloLectura, onCerrar, onResponder, onReaccionar, onCopiar, onEditar, onEliminar }) {
   const ref = useRef(null);
   useEffect(() => {
     // El botón ⌄ (anclaRef) queda afuera del menú pero no cuenta como
@@ -212,6 +214,7 @@ function MenuAcciones({ m, propio, yo, arriba, anclaRef, onCerrar, onResponder, 
         whiteSpace: 'normal',
       }}
     >
+      {!soloLectura && (
       <div style={{ display: 'flex', gap: 2, padding: '2px 8px 6px', borderBottom: '1px solid #eef0f2' }}>
         {REACCIONES_RAPIDAS.map((e) => (
           <button
@@ -228,16 +231,17 @@ function MenuAcciones({ m, propio, yo, arriba, anclaRef, onCerrar, onResponder, 
           </button>
         ))}
       </div>
-      <button type="button" style={item} onClick={hacer(onResponder)}>↩️ Responder</button>
-      {m.texto && <button type="button" style={item} onClick={hacer(onCopiar)}>📋 Copiar texto</button>}
-      {propio && m.texto != null && <button type="button" style={item} onClick={hacer(onEditar)}>✏️ Editar</button>}
-      {propio && <button type="button" style={{ ...item, color: '#b3261e' }} onClick={hacer(onEliminar)}>🗑️ Eliminar</button>}
+      )}
+      {!soloLectura && <button type="button" style={item} onClick={hacer(onResponder)}>Responder</button>}
+      {m.texto && <button type="button" style={item} onClick={hacer(onCopiar)}>Copiar texto</button>}
+      {!soloLectura && propio && m.texto != null && <button type="button" style={item} onClick={hacer(onEditar)}>Editar</button>}
+      {!soloLectura && propio && <button type="button" style={{ ...item, color: '#b3261e' }} onClick={hacer(onEliminar)}>Eliminar</button>}
     </div>
   );
 }
 
 export default function ChatBurbuja({
-  m, propio, inicioDeTanda, lecturas, otrosMiembros, miembrosSet, yo, resaltado,
+  m, propio, inicioDeTanda, lecturas, otrosMiembros, miembrosSet, yo, resaltado, soloLectura = false,
   menuAbierto, onMenu, onMediaLoad, onResponder, onReaccionar, onCopiar, onEditar, onEliminar, onIrACita,
 }) {
   const [hover, setHover] = useState(false);
@@ -245,6 +249,8 @@ export default function ChatBurbuja({
   const wrapRef = useRef(null);
   const botonMenuRef = useRef(null);
   const soloMedia = !m.texto && m.adjuntos.length > 0 && !m.responde_a;
+  // En solo lectura el menú es solo "Copiar texto": sin texto no hay menú.
+  const conMenu = !m.eliminado && (!soloLectura || !!m.texto);
 
   function abrirMenu() {
     const r = wrapRef.current?.getBoundingClientRect();
@@ -279,7 +285,7 @@ export default function ChatBurbuja({
             display: 'flex', flexDirection: 'column', gap: 4,
           }}
         >
-          {!m.eliminado && (hover || menuAbierto) && (
+          {conMenu && (hover || menuAbierto) && (
             <button
               ref={botonMenuRef}
               type="button"
@@ -296,7 +302,7 @@ export default function ChatBurbuja({
           )}
           {menuAbierto && (
             <MenuAcciones
-              m={m} propio={propio} yo={yo} arriba={arriba} anclaRef={botonMenuRef} onCerrar={() => onMenu(null)}
+              m={m} propio={propio} yo={yo} arriba={arriba} anclaRef={botonMenuRef} soloLectura={soloLectura} onCerrar={() => onMenu(null)}
               onResponder={onResponder} onReaccionar={onReaccionar} onCopiar={onCopiar} onEditar={onEditar} onEliminar={onEliminar}
             />
           )}
@@ -307,7 +313,7 @@ export default function ChatBurbuja({
           )}
           {m.eliminado ? (
             <div style={{ color: C.suave, fontStyle: 'italic', paddingRight: 4 }}>
-              🚫 {propio ? 'Eliminaste este mensaje' : 'Este mensaje fue eliminado'}
+              {propio ? 'Eliminaste este mensaje' : 'Este mensaje fue eliminado'}
             </div>
           ) : (
             <>
@@ -324,15 +330,15 @@ export default function ChatBurbuja({
         </div>
       </div>
       <div style={{ paddingLeft: propio ? 0 : 34 }}>
-        <Reacciones reacciones={m.reacciones} yo={yo} propio={propio} onToggle={(emoji) => onReaccionar(m, emoji)} />
+        <Reacciones reacciones={m.reacciones} yo={yo} propio={propio} soloLectura={soloLectura} onToggle={(emoji) => onReaccionar(m, emoji)} />
       </div>
     </div>
   );
 }
 
 // Burbuja de un mensaje propio que todavía no confirmó el servidor: se
-// muestra al instante con 🕓 (y barra de progreso si lleva archivos); si
-// falla, queda con ⚠ y la opción de reintentar o descartar.
+// muestra al instante con un relojito (y barra de progreso si lleva
+// archivos); si falla, queda en rojo con la opción de reintentar o descartar.
 export function BurbujaEnvio({ envio, miembrosSet, yo, onReintentar, onDescartar }) {
   const conArchivos = envio.archivos.length > 0;
   return (
@@ -357,13 +363,13 @@ export function BurbujaEnvio({ envio, miembrosSet, yo, onReintentar, onDescartar
         )}
         {envio.estado === 'error' ? (
           <div style={{ fontSize: 12, color: '#b3261e', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', whiteSpace: 'normal' }}>
-            <span>⚠ {envio.error || 'No se envió'}</span>
+            <span style={{ fontWeight: 700 }}>{envio.error || 'No se envió'}</span>
             <button type="button" onClick={() => onReintentar(envio)} style={{ background: 'none', border: 'none', color: C.link, cursor: 'pointer', fontWeight: 700, padding: 0 }}>Reintentar</button>
             <button type="button" onClick={() => onDescartar(envio)} style={{ background: 'none', border: 'none', color: C.suave, cursor: 'pointer', padding: 0 }}>Descartar</button>
           </div>
         ) : (
-          <div style={{ alignSelf: 'flex-end', fontSize: 11, color: C.suave, marginTop: -2 }} title="Enviando…">
-            {conArchivos && envio.progreso < 100 ? `${envio.progreso}% · ` : ''}{formatHora(envio.created_at)} 🕓
+          <div style={{ alignSelf: 'flex-end', fontSize: 11, color: C.suave, marginTop: -2, display: 'flex', alignItems: 'center', gap: 4 }} title="Enviando…">
+            {conArchivos && envio.progreso < 100 ? `${envio.progreso}% · ` : ''}{formatHora(envio.created_at)} <IconoReloj size={12} />
           </div>
         )}
       </div>

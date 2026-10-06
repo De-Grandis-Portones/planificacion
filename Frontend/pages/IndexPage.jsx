@@ -1,7 +1,7 @@
 // src/pages/IndexPage.jsx
 import { Link, useNavigate } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
-import { fetchAdminTickets, fetchReuniones } from '../src/api';
+import { fetchAdminTickets, fetchReuniones, fetchProyectosProgramadoresNoLeidos } from '../src/api';
 import { useChatProgramadores } from '../src/components/chatProgramadores/chatContexto';
 import { todayISO10 } from '../src/utils/isoWeek';
 
@@ -70,6 +70,25 @@ function isStaticPage(path) {
   return /\.html(?:$|[?#])/.test(String(path || ''));
 }
 
+// Accesos a las otras apps del ecosistema, uno por app, en la sección
+// Programadores junto a Tickets/Reuniones/Índice (pedido 2026-10-05: "como
+// reuniones, índice, ticket, agregar cada app que redirija a la app que
+// toque"). Dominios de producción verificados contra el título de cada repo
+// (ojo: integrador.vercel.app NO es nuestro). Se abren en otra pestaña para
+// no perder el planificador.
+const APPS_EXTERNAS = [
+  { path: 'https://presupuestador-degrandisportones.vercel.app', label: 'App · Presupuestador' },
+  { path: 'https://integrador-six-zeta.vercel.app', label: 'App · Integrador' },
+  { path: 'https://arca-comprobantes-frontend.vercel.app', label: 'App · Comprobantes ARCA → Odoo' },
+  { path: 'https://remitos.vercel.app', label: 'App · Remitos' },
+  { path: 'https://informes-dg-portones.vercel.app', label: 'App · Informe de Ventas' },
+  { path: 'https://distribuidor-vert-1r5j.vercel.app', label: 'App · Distribuidor' },
+];
+
+function isExternal(path) {
+  return /^https?:\/\//.test(String(path || ''));
+}
+
 export default function IndexPage({ routes = [] }) {
   const nav = useNavigate();
 
@@ -88,6 +107,12 @@ export default function IndexPage({ routes = [] }) {
   // sección "Programadores" (Motor de Reglas, Gantt, Tickets, Índice de
   // Programación) se gatea con este scope nuevo, aparte.
   const isProgramadoresAdmin = has('programadores:admin');
+  // Mismo listado de scopes que valida el backend
+  // (Backend/server/routes/admin/portonesInstalados.js) - mantenerlos iguales.
+  const puedeVerPortonesInstalados = [
+    'preproduccion:full', 'preproduccion:admin', 'preproduccion:comercial_view',
+    'qc:admin', 'workflow:admin', 'servicio_tecnico:admin', 'programadores:admin',
+  ].some((s) => has(s));
 
   const isPreprodOnly = isPreprodAdmin && !isQcAdmin && !isWfAdmin && !canUsers;
 
@@ -146,7 +171,38 @@ export default function IndexPage({ routes = [] }) {
   // Mensajes nuevos del Chat de Programadores desde la última vez que se
   // abrió: lo mantiene en tiempo real ChatProgramadoresProvider
   // (NonProductionLayout), el mismo número que el botón "💬 Chat" de arriba.
-  const { noLeidos: chatNoLeidosCount } = useChatProgramadores();
+  const { noLeidos: chatNoLeidosCount, suscribir: suscribirChat } = useChatProgramadores();
+
+  // Mensajes nuevos en los chats de los proyectos donde participo: se pide
+  // al entrar, cada 60s y cuando el canal en tiempo real avisa de un mensaje
+  // (o de que lo leí en otra pestaña).
+  const [proyectosNoLeidosCount, setProyectosNoLeidosCount] = useState(0);
+  useEffect(() => {
+    if (!isProgramadoresAdmin) return undefined;
+    let cancelled = false;
+    let timer = null;
+    async function cargarProyectosNoLeidos() {
+      try {
+        const { data } = await fetchProyectosProgramadoresNoLeidos();
+        if (!cancelled) setProyectosNoLeidosCount(Number(data?.count) || 0);
+      } catch (err) {
+        console.error('Error cargando mensajes nuevos de proyectos:', err);
+      }
+    }
+    cargarProyectosNoLeidos();
+    const interval = setInterval(cargarProyectosNoLeidos, 60000);
+    const unsub = suscribirChat((ev) => {
+      if (ev.tipo !== 'proyecto' || !['mensaje', 'lectura'].includes(ev.evento?.tipo)) return;
+      clearTimeout(timer);
+      timer = setTimeout(cargarProyectosNoLeidos, 400);
+    });
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      clearTimeout(timer);
+      unsub();
+    };
+  }, [isProgramadoresAdmin, suscribirChat]);
 
   const logout = () => {
     clearAdminSession();
@@ -220,7 +276,7 @@ export default function IndexPage({ routes = [] }) {
     { path: '/listas-precios.html', label: 'Actualizar listas de precios' },
   ], []);
 
-  const infoRoutes = useMemo(() => {
+  const infoRoutesBase = useMemo(() => {
     if (isPreprodOnly) return preprodRoutes;
 
     if (isPreprodAdmin && !(isQcAdmin || isWfAdmin)) {
@@ -241,8 +297,17 @@ export default function IndexPage({ routes = [] }) {
     ];
   }, [isPreprodOnly, isPreprodAdmin, isQcAdmin, isWfAdmin, preprodRoutes]);
 
-  // Lo que se muestra en la sección "Programadores": el Chat primero (con su
-  // badge de mensajes nuevos) y después programadoresRoutes. Mismo gate.
+  // Portones instalados: también lo ven scopes que no entran al resto de esta
+  // sección (servicio técnico, programadores, preproducción comercial).
+  const infoRoutes = useMemo(() => (
+    puedeVerPortonesInstalados
+      ? [...infoRoutesBase, { path: '/admin/portones-instalados', label: 'Portones instalados · Clientes finales' }]
+      : infoRoutesBase
+  ), [infoRoutesBase, puedeVerPortonesInstalados]);
+
+  // Lo que se muestra en la sección "Programadores": el Chat y Proyectos
+  // primero (con sus badges de mensajes nuevos) y después
+  // programadoresRoutes. Mismo gate.
   const seccionProgramadores = useMemo(() => {
     if (isPreprodOnly || !isProgramadoresAdmin) return programadoresRoutes;
     return [
@@ -250,9 +315,14 @@ export default function IndexPage({ routes = [] }) {
         path: '/admin/programadores/chat', label: 'Admin · Chat de Programadores', badge: chatNoLeidosCount,
         badgeTitle: `${chatNoLeidosCount} mensaje${chatNoLeidosCount === 1 ? '' : 's'} nuevo${chatNoLeidosCount === 1 ? '' : 's'}`,
       },
+      {
+        path: '/admin/programadores/proyectos', label: 'Admin · Proyectos', badge: proyectosNoLeidosCount,
+        badgeTitle: `${proyectosNoLeidosCount} mensaje${proyectosNoLeidosCount === 1 ? '' : 's'} nuevo${proyectosNoLeidosCount === 1 ? '' : 's'} en tus proyectos`,
+      },
       ...programadoresRoutes,
+      ...APPS_EXTERNAS,
     ];
-  }, [isPreprodOnly, isProgramadoresAdmin, programadoresRoutes, chatNoLeidosCount]);
+  }, [isPreprodOnly, isProgramadoresAdmin, programadoresRoutes, chatNoLeidosCount, proyectosNoLeidosCount]);
 
   const NavBadge = ({ r }) => {
     if (!r.badge) return null;
@@ -271,6 +341,9 @@ export default function IndexPage({ routes = [] }) {
   };
 
   const NavTitle = ({ r }) => {
+    if (isExternal(r.path)) {
+      return <a href={r.path} target="_blank" rel="noopener noreferrer" className="idx-linkTitle">{r.label}</a>;
+    }
     if (isStaticPage(r.path)) {
       return <a href={r.path} className="idx-linkTitle">{r.label}<NavBadge r={r} /></a>;
     }
@@ -278,6 +351,9 @@ export default function IndexPage({ routes = [] }) {
   };
 
   const NavButton = ({ r }) => {
+    if (isExternal(r.path)) {
+      return <a href={r.path} target="_blank" rel="noopener noreferrer" className="btn btn--brand">Abrir</a>;
+    }
     if (isStaticPage(r.path)) {
       return <a href={r.path} className="btn btn--brand">Ir</a>;
     }
@@ -288,7 +364,10 @@ export default function IndexPage({ routes = [] }) {
     <li className="idx-linkItem">
       <div className="idx-linkText">
         <NavTitle r={r} />
-        <div className="idx-linkMeta">Ruta: <code>{r.path}</code></div>
+        <div className="idx-linkMeta">
+          {isExternal(r.path) ? 'Abre en otra pestaña: ' : 'Ruta: '}
+          <code>{isExternal(r.path) ? r.path.replace(/^https?:\/\//, '') : r.path}</code>
+        </div>
       </div>
       <NavButton r={r} />
     </li>
@@ -343,7 +422,7 @@ export default function IndexPage({ routes = [] }) {
               <div className="idx-section__head">
                 <div>
                   <div className="idx-section__title">Programadores</div>
-                  <div className="idx-section__sub">Chat del equipo, motor de reglas de tiempo, tickets e índice de programación</div>
+                  <div className="idx-section__sub">Chat del equipo, proyectos, motor de reglas de tiempo, tickets, índice de programación y accesos a las otras apps</div>
                 </div>
                 <span className="idx-pill">Programadores</span>
               </div>

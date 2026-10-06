@@ -299,6 +299,37 @@ router.patch('/tickets/:id/asignado', adminAuth, async (req, res) => {
   }
 });
 
+// PATCH /admin/tickets/:id/no-la-hago — "No la voy a hacer" (accion:
+// 'declinar', default, con `motivo` opcional) o "Deshacer"
+// (accion:'retirar'). Para que el resto de los programadores vea, en el
+// ticket, que uno no se va a encargar de él; no le avisa a nadie. Si quien
+// declina era el asignado, se libera (ver ticketsDb.declinarTicket). No
+// aplica a tickets cerrados (deshacer sí).
+const MAX_MOTIVO_DECLINAR = 300;
+router.patch('/tickets/:id/no-la-hago', adminAuth, async (req, res) => {
+  try {
+    const username = String(req.admin?.username || '').trim();
+    if (!username) return res.status(401).json({ error: 'Sesión sin usuario' });
+    const id = Number(req.params.id);
+    const accion = String(req.body?.accion || 'declinar').trim();
+    if (!['declinar', 'retirar'].includes(accion)) return res.status(400).json({ error: 'Acción inválida' });
+    const actual = await ticketsDb.getTicketFila(id);
+    if (!actual) return res.status(404).json({ error: 'Ticket no encontrado' });
+    if (accion === 'retirar') {
+      await ticketsDb.retirarDeclinacion(id, username);
+      return res.json({ ok: true, ticket: await ticketsDb.getTicketFila(id) });
+    }
+    if (actual.estado === 'closed') return res.status(400).json({ error: 'El ticket ya está cerrado' });
+    const motivo = String(req.body?.motivo || '').trim().slice(0, MAX_MOTIVO_DECLINAR);
+    const ticket = await ticketsDb.declinarTicket(id, username, motivo);
+    if (!ticket) return res.status(404).json({ error: 'Ticket no encontrado' });
+    return res.json({ ok: true, ticket });
+  } catch (err) {
+    console.error('tickets admin no-la-hago error:', err);
+    return res.status(500).json({ error: 'Error guardando el aviso', detail: err.message });
+  }
+});
+
 // PATCH /admin/tickets/:id/board-column — mover una tarjeta "tarea" a otra
 // columna del tablero (ver AdminTicketsBoardPage.jsx). Solo aplica a
 // tarjetas creadas a mano (app_origen='tarea') - un ticket real de otra app

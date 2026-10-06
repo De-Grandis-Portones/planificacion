@@ -6,7 +6,12 @@
 import { getCurrentScopes } from '../../utils/adminScopes';
 
 export const RUTA_CHAT = '/admin/programadores/chat';
+export const RUTA_PROYECTOS = '/admin/programadores/proyectos';
 export const SCOPE_CHAT = 'programadores:admin';
+
+export function rutaProyecto(id) {
+  return `${RUTA_PROYECTOS}/${id}`;
+}
 
 export function puedeUsarChat() {
   return getCurrentScopes().includes(SCOPE_CHAT);
@@ -84,15 +89,16 @@ export function etiquetaDia(iso) {
   return d.toLocaleDateString('es-AR', opts);
 }
 
-export function iconoArchivo(nombre) {
+// Color del recuadro con la extensión (BadgeArchivo en IconosChat.jsx).
+export function colorDeArchivo(nombre) {
   const ext = extensionDe(nombre);
-  if (ext === 'pdf') return '📕';
-  if (['xls', 'xlsx', 'csv'].includes(ext)) return '📊';
-  if (['doc', 'docx'].includes(ext)) return '📝';
-  if (['ppt', 'pptx'].includes(ext)) return '📽️';
-  if (['zip', 'rar', '7z'].includes(ext)) return '🗜️';
-  if (['mp3', 'ogg', 'wav', 'm4a'].includes(ext)) return '🎵';
-  return '📄';
+  if (ext === 'pdf') return '#dc2626';
+  if (['xls', 'xlsx', 'csv'].includes(ext)) return '#15803d';
+  if (['doc', 'docx'].includes(ext)) return '#1d4ed8';
+  if (['ppt', 'pptx'].includes(ext)) return '#c2410c';
+  if (['zip', 'rar', '7z'].includes(ext)) return '#a16207';
+  if (['mp3', 'ogg', 'wav', 'm4a', 'mp4', 'webm', 'mov'].includes(ext)) return '#7c3aed';
+  return '#64748b';
 }
 
 export function esImagen(tipo, nombre) {
@@ -100,13 +106,13 @@ export function esImagen(tipo, nombre) {
   return (String(tipo || '').startsWith('image/') || ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext)) && ext !== 'heic';
 }
 
-// Una línea para citas y avisos: el texto, o "📷 Foto" / "📄 archivo.pdf".
+// Una línea para citas y avisos: el texto, o "Foto" / "archivo.pdf".
 export function previewDe({ texto, adjunto, n_adjuntos: nAdjuntos, eliminado }) {
-  if (eliminado) return '🚫 Mensaje eliminado';
+  if (eliminado) return 'Mensaje eliminado';
   const t = String(texto || '').replace(/```/g, '').replace(/\s+/g, ' ').trim();
   if (t) return t;
-  if (adjunto) return esImagen(adjunto.tipo, adjunto.nombre) ? '📷 Foto' : `📄 ${adjunto.nombre}`;
-  if (nAdjuntos) return nAdjuntos === 1 ? '📎 Archivo' : `📎 ${nAdjuntos} archivos`;
+  if (adjunto) return esImagen(adjunto.tipo, adjunto.nombre) ? 'Foto' : adjunto.nombre;
+  if (nAdjuntos) return nAdjuntos === 1 ? 'Archivo' : `${nAdjuntos} archivos`;
   return '';
 }
 

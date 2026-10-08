@@ -59,6 +59,7 @@ import UserAdminDashboard from './components/UserAdminDashboard';
 import IndexPage from '../pages/IndexPage';
 import RefabricacionPage from '../pages/RefabricacionPage';
 import DespachoV2Page from '../pages/DespachoV2Page';
+import DisenoV2Page from '../pages/DisenoV2Page';
 import NonProductionLayout from './components/NonProductionLayout';
 
 const color = 'var(--brand)';
@@ -690,10 +691,15 @@ const ROUTES = [
   // a mano en 'prefabricados' (en vez de derivarla del path, como el resto de
   // las rutas) para que las 3 compartan el mismo botón/carrito de pedidos de
   // insumos - son secciones físicas distintas pero un solo pedido de insumos.
+  // Armado Dintel (dinteles de chapa, ver migration_dintel_chapa_*) se arma en
+  // el mismo puesto que las piernas: columna al lado (pedido explícito).
   {
     path: '/armado-piernas',
     label: 'Producción · Armado de Piernas',
-    stages: ONE('armado_piernas', 'Armado de Piernas'),
+    stages: [
+      { key: 'armado_piernas', label: 'Armado de Piernas', mode: 'porton' },
+      { key: 'armado_dintel', label: 'Armado Dintel', mode: 'porton' },
+    ],
     seccion: 'prefabricados',
   },
   {
@@ -838,6 +844,8 @@ export default function App() {
         <Route path="/stats/portones" element={<PortonesStatsPage />} />
         <Route path="/refabricacion" element={<RefabricacionPage />} />
         <Route path="/despacho_v2" element={<DespachoV2Page />} />
+        <Route path="/diseno_v2" element={<DisenoV2Page />} />
+        <Route path="/diseño_v2" element={<Navigate to="/diseno_v2" replace />} />
 
         <Route path="*" element={<Navigate to="/admin/login" replace />} />
       </Routes>

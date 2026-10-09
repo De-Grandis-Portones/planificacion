@@ -1,5 +1,6 @@
 const express = require('express');
 const { pool } = require('../../db');
+const { sqlInstalacionSigueSalida } = require('../../lib/logisticaInstalacionVendida');
 
 const router = express.Router();
 
@@ -106,8 +107,16 @@ router.put('/preproduccion-valores/:id', async (req, res) => {
   }
 
   if (hasPatch) {
-    sets.push(`data = coalesce(data, '{}'::jsonb) || $${idx++}::jsonb`);
+    const pIdx = idx++;
     params.push(JSON.stringify(patchObj));
+    // Si se graba la fecha de despacho (y no se toca a la vez la de
+    // instalación), un NV que vendió instalación la toma también - ver
+    // lib/logisticaInstalacionVendida.js.
+    const tocaSalidaSola = Object.prototype.hasOwnProperty.call(patchObj, 'fecha_salida_imput')
+      && !Object.prototype.hasOwnProperty.call(patchObj, 'fecha_llegada_imput');
+    sets.push(tocaSalidaSola
+      ? `data = coalesce(data, '{}'::jsonb) || $${pIdx}::jsonb || ${sqlInstalacionSigueSalida('data', `($${pIdx}::jsonb->>'fecha_salida_imput')`)}`
+      : `data = coalesce(data, '{}'::jsonb) || $${pIdx}::jsonb`);
   }
 
   sets.push(`updated_at = now()`);

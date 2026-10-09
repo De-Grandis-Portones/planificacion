@@ -23,6 +23,7 @@ const axios = require('axios');
 const { pool } = require('../db');
 const { resolveCoordsForNvs } = require('./logisticaMapa');
 const { resolveEtapasPorNv, resolveSemanaPrometidaPorNv } = require('./logisticaMapaExtras');
+const { sqlInstalacionSigueSalida } = require('./logisticaInstalacionVendida');
 
 const BLOCKED_NV_URL = 'https://planificacion-pi.vercel.app/blocked_nvs.txt';
 const BLOCKED_CACHE_MS = 5 * 60 * 1000;
@@ -139,7 +140,8 @@ async function asignarFechaSalida(pares, fechaISO) {
       select unnest($1::int[]) as nv, unnest($2::text[]) as nv_tipo
     )
     update public.preproduccion_valores pv
-    set data = coalesce(pv.data, '{}'::jsonb) || jsonb_build_object('fecha_salida_imput', $3::text),
+    set data = coalesce(pv.data, '{}'::jsonb) || jsonb_build_object('fecha_salida_imput', $3::text)
+               || ${sqlInstalacionSigueSalida('pv.data', '$3::text')},
         updated_at = now()
     from pares p
     where pv.nv = p.nv and pv.nv_tipo = p.nv_tipo;
